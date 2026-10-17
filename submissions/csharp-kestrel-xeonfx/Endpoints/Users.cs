@@ -72,10 +72,9 @@ public static class Users
         try
         {
             string hash = Passwords.UnknownUserHash;
-            await using (var cmd = Db.Source.CreateCommand(Sql.Login))
+            using (var read = Db.Reads.Login.Rent().Set(0, email))
             {
-                cmd.Parameters.Add(Db.P(email));
-                await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
+                await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
                 if (await r.ReadAsync())
                 {
                     hash = r.GetString(5);
@@ -98,9 +97,8 @@ public static class Users
     {
         long viewer = Auth.Viewer(ctx);
         if (viewer <= 0) { await Responses.Unauthorized(ctx); return; }
-        await using var cmd = Db.Source.CreateCommand(Sql.CurrentUser);
-        cmd.Parameters.Add(Db.P(viewer));
-        await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
+        using var read = Db.Reads.CurrentUser.Rent().Set(0, viewer);
+        await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
         if (!await r.ReadAsync()) { await Responses.Unauthorized(ctx); return; }
         await Responses.Send(ctx, 200, User(r, 0, Auth.Token(ctx)));
     }

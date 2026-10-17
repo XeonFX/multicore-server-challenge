@@ -29,11 +29,9 @@ public static class Profiles
         long viewer = Auth.Viewer(ctx);
         if (viewer < 0) { await Responses.Unauthorized(ctx); return; }
         JsonOut j;
-        await using (var cmd = Db.Source.CreateCommand(Sql.Profile))
+        using (var read = Db.Reads.Profile.Rent().Set(0, viewer).Set(1, username))
         {
-            cmd.Parameters.Add(Db.P(viewer));
-            cmd.Parameters.Add(Db.P(username));
-            await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
+            await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
             if (!await r.ReadAsync()) { await Responses.Error(ctx, 404, "profile not found"); return; }
             j = Profile(r, r.GetBoolean(3));
         }

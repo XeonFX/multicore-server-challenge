@@ -31,6 +31,9 @@
     <!-- Idle thread-pool workers sleep at once instead of spinning for work first. The spinning burns CPU that
          Postgres, on the same cores, needs: without it the app used 25% less CPU per request at the same load. -->
     <RuntimeHostConfigurationOption Include="System.Threading.ThreadPool.UnfairSemaphoreSpinLimit" Value="0" />
+    <!-- Every statement uses positional parameters ($1) and none holds a ';', so Npgsql needn't parse them: with
+         rewriting on it parses each parameterless statement (GET /api/tags, a fifth of all requests) for legacy batching. -->
+    <RuntimeHostConfigurationOption Include="Npgsql.EnableSqlRewriting" Value="false" />
   </ItemGroup>
 
 </Project>

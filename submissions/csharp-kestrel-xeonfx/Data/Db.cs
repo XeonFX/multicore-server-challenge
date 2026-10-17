@@ -6,7 +6,21 @@ namespace Conduit.Data;
 
 public static class Db
 {
-    public static NpgsqlDataSource Source = null!;
+    /// <summary>The reads' data source; setting it gives the read statements new command pools on it.</summary>
+    public static NpgsqlDataSource Source
+    {
+        get => _source;
+        set
+        {
+            _source = value;
+            Reads = new Reads(value);
+        }
+    }
+
+    static NpgsqlDataSource _source = null!;
+
+    /// <summary>The read statements, with pooled commands on <see cref="Source"/>.</summary>
+    public static Reads Reads { get; private set; } = null!;
 
     /// <summary>Every statement that writes goes through here, grouped into shared commits.</summary>
     public static Writer Writer = null!;
@@ -37,6 +51,9 @@ public static class Db
         csb.Enlist = false;
         Plan(csb);
         Source = NpgsqlDataSource.Create(csb.ConnectionString);
+        // The first connection a multiplexed data source opens is a real one (it checks the server is there); after
+        // it, opening one does no I/O, which the pooled read commands rely on (see Read).
+        using (Source.OpenConnection()) { }
         Writer = new Writer(WriterSource(csb, writers, WriterLockTimeout));
         Writer.Start(writers);
     }

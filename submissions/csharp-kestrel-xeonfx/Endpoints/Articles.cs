@@ -75,14 +75,11 @@ public static class Articles
         JsonOut? j = null;
         try
         {
-            await using var cmd = Db.Source.CreateCommand(Sql.List[(int)kind]);
-            cmd.Parameters.Add(Db.P(viewer));
-            cmd.Parameters.Add(Db.P(limit));
-            cmd.Parameters.Add(Db.P(offset));
+            using var read = Db.Reads.List[(int)kind].Rent().Set(0, viewer).Set(1, limit).Set(2, offset);
             // feed: per followee, the newest limit + offset articles are enough
-            if (kind == ListKind.Feed) cmd.Parameters.Add(Db.P(offset > long.MaxValue - limit ? long.MaxValue : offset + limit));
-            else if (filter is not null) cmd.Parameters.Add(Db.P(filter));
-            await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
+            if (kind == ListKind.Feed) read.Set(3, offset > long.MaxValue - limit ? long.MaxValue : offset + limit);
+            else if (filter is not null) read.Set(3, filter);
+            await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
             j = JsonOut.Rent();
             var w = j.W;
             long n = 0;
@@ -111,11 +108,9 @@ public static class Articles
         long viewer = Auth.Viewer(ctx);
         if (viewer < 0) { await Responses.Unauthorized(ctx); return; }
         JsonOut j;
-        await using (var cmd = Db.Source.CreateCommand(ArticleBySlug))
+        using (var read = Db.Reads.ArticleBySlug.Rent().Set(0, viewer).Set(1, slug))
         {
-            cmd.Parameters.Add(Db.P(viewer));
-            cmd.Parameters.Add(Db.P(slug));
-            await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
+            await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
             if (!await r.ReadAsync()) { await Responses.Error(ctx, 404, "article not found"); return; }
             j = Single(r, 0);
         }

@@ -178,6 +178,16 @@ throwing.
 - No middleware, no routing tables, no DI: `app.Run(Router.Handle)` and a `switch` on the path segments.
 - Responses are written by `Utf8JsonWriter` into a pooled buffer and sent with one `Content-Length` write. The
   pool keeps at most 32 MB of buffers, so a burst doesn't pin its peak for good.
+- **Text columns go out as UTF-8.** A text column's bytes are copied from the row (`GetBytes`, a buffer kept per
+  thread) and written as they are, escaped where JSON needs it: no string per column and no UTF-16 round trip.
+- **Pooled read commands.** Each read statement has a pool of commands that keep their typed parameters and, with
+  multiplexing, a connection of their own that stays open (it holds no Postgres connection while idle). A read
+  sets values and runs: no command, connection or parameter objects. Npgsql's SQL rewriting is off
+  (`Npgsql.EnableSqlRewriting=false`): every statement uses `$n` and none holds a `;`, so nothing needs parsing.
+- Together these cut the bytes allocated per request (our code and Npgsql, measured in process on the full seed)
+  from about 5.9 KB to 1.3 KB on the request mix: a global list page from 9.8 KB to 1.2 KB, an article from 5.7 KB
+  to 1.2 KB. Gen0 collections came half as often; throughput and latency on a 2-vCPU x86 VPS stayed within the
+  runs' spread (about 5%).
 - JWT verification allocates nothing: it checks the token's alphabet, decodes into stack buffers, signs with a
   keyed HMAC kept per thread, compares in constant time, and accepts only HS256 tokens with a numeric `sub`
   and an unexpired `exp`. A header equal to the one this server issues skips the header parse; any other is

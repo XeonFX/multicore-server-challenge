@@ -13,8 +13,8 @@ public static class Tags
         JsonOut? j = null;
         try
         {
-            await using var cmd = Db.Source.CreateCommand(Sql.Tags);
-            await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
+            using var read = Db.Reads.Tags.Rent();
+            await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
             await r.ReadAsync();
             j = JsonOut.Rent();
             var w = j.W;
