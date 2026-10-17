@@ -15,7 +15,7 @@ public static class Db
     {
         var uri = new Uri(databaseUrl);
         string[] userInfo = uri.UserInfo.Split(':', 2);
-        var csb = new NpgsqlConnectionStringBuilder
+        Init(new NpgsqlConnectionStringBuilder
         {
             Host = uri.Host,
             Port = uri.Port > 0 ? uri.Port : 5432,
@@ -23,21 +23,39 @@ public static class Db
             Username = Uri.UnescapeDataString(userInfo[0]),
             Password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : null,
             SslMode = SslMode.Disable,
-            // Many requests share each connection: commands from concurrent requests are pipelined onto a few
-            // connections instead of each request holding one, so Postgres runs few busy backends.
-            Multiplexing = multiplexing,
-            MaxPoolSize = poolSize,
-            NoResetOnClose = true,
-            Enlist = false,
-        };
+        }, poolSize, multiplexing, writers);
+    }
+
+    /// <summary>The data sources and the writer on <paramref name="csb"/>'s database (the tests pass theirs).</summary>
+    public static void Init(NpgsqlConnectionStringBuilder csb, int poolSize, bool multiplexing, int writers)
+    {
+        // Many requests share each connection: commands from concurrent requests are pipelined onto a few
+        // connections instead of each request holding one, so Postgres runs few busy backends.
+        csb.Multiplexing = multiplexing;
+        csb.MaxPoolSize = poolSize;
+        csb.NoResetOnClose = true;
+        csb.Enlist = false;
         Plan(csb);
         Source = NpgsqlDataSource.Create(csb.ConnectionString);
-        // Each writer loop owns one connection; a multiplexed one would make the reads queued on it wait for the
-        // commit's WAL flush.
-        csb.Multiplexing = false;
-        csb.MaxPoolSize = writers;
-        Writer = new Writer(NpgsqlDataSource.Create(csb.ConnectionString));
+        Writer = new Writer(WriterSource(csb, writers, WriterLockTimeout));
         Writer.Start(writers);
+    }
+
+    /// <summary>
+    /// How long a write waits for a row lock another transaction holds. Past it the statement fails (503) and only its
+    /// own write fails; the rest of its group commits without it. The other writer loop's group holds locks for a
+    /// commit's milliseconds, and deadlocks between the two are detected after 1 s (deadlock_timeout) and run again,
+    /// so only a lock held by something else waits this long; without it the group would wait the 30 s statement timeout.
+    /// </summary>
+    public static readonly TimeSpan WriterLockTimeout = TimeSpan.FromSeconds(2);
+
+    /// <summary>The writer loops' connections, from <paramref name="csb"/>'s settings: one per loop, not multiplexed (the
+    /// reads queued on a multiplexed one would wait for the commit's WAL flush), with a lock timeout.</summary>
+    public static NpgsqlDataSource WriterSource(NpgsqlConnectionStringBuilder csb, int writers, TimeSpan lockTimeout)
+    {
+        var w = new NpgsqlConnectionStringBuilder(csb.ConnectionString) { Multiplexing = false, MaxPoolSize = writers };
+        w.Options = $"{w.Options} -c lock_timeout={(long)lockTimeout.TotalMilliseconds}ms".TrimStart();
+        return NpgsqlDataSource.Create(w.ConnectionString);
     }
 
     /// <summary>How every connection prepares and plans statements; the list tests run under the same settings.</summary>

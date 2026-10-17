@@ -82,7 +82,7 @@ public static class Articles
             // feed: per followee, the newest limit + offset articles are enough
             if (kind == ListKind.Feed) cmd.Parameters.Add(Db.P(offset > long.MaxValue - limit ? long.MaxValue : offset + limit));
             else if (filter is not null) cmd.Parameters.Add(Db.P(filter));
-            await using var r = await cmd.ExecuteReaderAsync();
+            await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
             j = JsonOut.Rent();
             var w = j.W;
             long n = 0;
@@ -115,7 +115,7 @@ public static class Articles
         {
             cmd.Parameters.Add(Db.P(viewer));
             cmd.Parameters.Add(Db.P(slug));
-            await using var r = await cmd.ExecuteReaderAsync();
+            await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
             if (!await r.ReadAsync()) { await Responses.Error(ctx, 404, "article not found"); return; }
             j = Single(r, 0);
         }

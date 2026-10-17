@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -18,8 +19,19 @@ public sealed class Writer
     /// <summary>The most writes in one transaction.</summary>
     public const int MaxGroup = 128;
 
+    /// <summary>
+    /// The most writes waiting for a loop. More are refused at once (503) rather than queued, so a stalled database
+    /// can't pile up requests and their bodies without limit. Under the workload's closed loop of users the writes in
+    /// flight stay in the tens; this many only queue when commits have stopped.
+    /// </summary>
+    public const int MaxQueued = 4096;
+
     readonly Channel<Job> _jobs = Channel.CreateUnbounded<Job>();
     readonly NpgsqlDataSource _source;
+    int _queued;
+
+    /// <summary>Writes waiting for a loop.</summary>
+    public int Queued => Volatile.Read(ref _queued);
 
     /// <param name="source">Opens the loops' connections; they must not be multiplexed.</param>
     public Writer(NpgsqlDataSource source) => _source = source;
@@ -41,9 +53,22 @@ public sealed class Writer
     public Task<T> Run<T>(NpgsqlBatchCommand[] commands, Func<NpgsqlDataReader?, T> read, CancellationToken aborted = default)
     {
         var job = new Job<T>(commands, read, aborted);
-        _jobs.Writer.TryWrite(job);
+        if (Interlocked.Increment(ref _queued) > MaxQueued)
+        {
+            Interlocked.Decrement(ref _queued);
+            Interlocked.Increment(ref Stats.WritesRefused);
+            job.Fail(new ServerBusyException("too many writes are waiting"));
+        }
+        else if (!_jobs.Writer.TryWrite(job))
+        {
+            Interlocked.Decrement(ref _queued);
+            job.Fail(new InvalidOperationException("the writer is stopped"));
+        }
         return job.Done.Task;
     }
+
+    /// <summary>Takes no more writes. Each loop commits what has queued, closes its connection and ends.</summary>
+    public void Complete() => _jobs.Writer.TryComplete();
 
     public Task<T> Run<T>(NpgsqlBatchCommand command, Func<NpgsqlDataReader?, T> read, CancellationToken aborted = default) =>
         Run([command], read, aborted);
@@ -54,8 +79,11 @@ public sealed class Writer
         NpgsqlConnection? conn = null;
         while (await _jobs.Reader.WaitToReadAsync())
         {
+            long taken = Stopwatch.GetTimestamp();
             while (group.Count < MaxGroup && _jobs.Reader.TryRead(out var job))
             {
+                Interlocked.Decrement(ref _queued);
+                Stats.Max(ref Stats.WriteWaitTicksMax, taken - job.Enqueued);
                 // Its client is gone and nothing ran yet: the write is dropped. Once in a group, it runs to the end.
                 if (job.Aborted.IsCancellationRequested) job.Cancel();
                 else group.Add(job);
@@ -77,8 +105,15 @@ public sealed class Writer
                     conn = null;
                 }
             }
+            long took = Stopwatch.GetTimestamp() - taken;
+            Interlocked.Increment(ref Stats.WriteGroups);
+            Interlocked.Add(ref Stats.WritesGrouped, group.Count);
+            Interlocked.Add(ref Stats.CommitTicks, took);
+            Stats.Max(ref Stats.CommitTicksMax, took);
+            Stats.Max(ref Stats.WriteGroupMax, group.Count);
             group.Clear();
         }
+        if (conn is not null) await conn.DisposeAsync();
     }
 
     /// <summary>
@@ -93,7 +128,7 @@ public sealed class Writer
         int from = 0;
         while (from < group.Count)
         {
-            var (failed, error) = await TryCommit(conn, group, from, group.Count);
+            var (failed, error) = await TryCommit(conn, group, from, group.Count, rerun: from > 0);
             if (failed < 0) return;
             if (failed == group.Count)
             {
@@ -135,8 +170,9 @@ public sealed class Writer
     /// the commit. On an error from Postgres returns the index of the write whose statement failed
     /// (<paramref name="to"/> if the commit failed) and the error; nothing committed.
     /// </summary>
-    static async Task<(int Failed, PostgresException? Error)> TryCommit(NpgsqlConnection conn, List<Job> jobs, int from, int to)
+    static async Task<(int Failed, PostgresException? Error)> TryCommit(NpgsqlConnection conn, List<Job> jobs, int from, int to, bool rerun = true)
     {
+        if (rerun) Interlocked.Increment(ref Stats.WriteRetries);
         int i = from;
         try
         {
@@ -167,6 +203,7 @@ public sealed class Writer
     {
         public readonly NpgsqlBatchCommand[] Commands = commands;
         public readonly CancellationToken Aborted = aborted;
+        public readonly long Enqueued = Stopwatch.GetTimestamp();
         public abstract void Read(NpgsqlDataReader? row);
         public abstract void Complete();
         public abstract void Fail(Exception e);

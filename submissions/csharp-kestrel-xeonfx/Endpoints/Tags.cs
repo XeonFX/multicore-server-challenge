@@ -14,7 +14,7 @@ public static class Tags
         try
         {
             await using var cmd = Db.Source.CreateCommand(Sql.Tags);
-            await using var r = await cmd.ExecuteReaderAsync();
+            await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
             await r.ReadAsync();
             j = JsonOut.Rent();
             var w = j.W;

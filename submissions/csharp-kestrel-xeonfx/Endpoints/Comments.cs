@@ -37,7 +37,7 @@ public static class Comments
         await using var cmd = Db.Source.CreateCommand(Sql.Comments);
         cmd.Parameters.Add(Db.P(viewer));
         cmd.Parameters.Add(Db.P(slug));
-        await using var r = await cmd.ExecuteReaderAsync();
+        await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
         if (!await r.ReadAsync()) { await Responses.Error(ctx, 404, "article not found"); return; }
         var j = JsonOut.Rent();
         var w = j.W;

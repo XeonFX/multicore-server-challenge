@@ -51,6 +51,23 @@ public class BcryptQueueTests
     }
 
     [Fact]
+    public async Task JobsPastTheQueueLimitAreRefusedAtOnce()
+    {
+        var q = new BcryptQueue(1, TimeSpan.Zero);
+        int extra = 2 * Bcrypt.MaxLanes;
+        var all = Enumerable.Range(0, BcryptQueue.MaxQueuedPerThread + extra)
+            .Select(_ => q.RunAsync(Job(), TestContext.Current.CancellationToken)).ToArray();
+
+        // While they are queued (well under a hash's time) the worker takes one batch at most, so that many of the
+        // extra jobs find room and the rest are refused.
+        var refused = all.Where(t => t.IsFaulted).ToArray();
+        Assert.InRange(refused.Length, extra - Bcrypt.MaxLanes, extra);
+        foreach (var t in refused) await Assert.ThrowsAsync<ServerBusyException>(() => t);
+        foreach (var t in all.Where(t => !t.IsFaulted)) Assert.True((await t).Matches());
+        Assert.Equal(0, q.Queued);
+    }
+
+    [Fact]
     public async Task AnAbortedFirstJobDoesNotStartTheWindowOrABatch()
     {
         var q = new BcryptQueue(1, TimeSpan.FromMilliseconds(300));

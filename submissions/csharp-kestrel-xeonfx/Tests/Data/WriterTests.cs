@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Conduit.Data;
@@ -23,13 +24,13 @@ public sealed class WriterTests : IAsyncDisposable
     NpgsqlDataSource? _db;
 
     /// <summary>A writer whose loops are not started yet, so writes queued now share the first group.</summary>
-    async Task<Writer> NewWriter()
+    async Task<Writer> NewWriter(TimeSpan? lockTimeout = null)
     {
         Assert.SkipWhen(ConnectionString is null, "CONDUIT_TEST_DB is not set");
         _db = NpgsqlDataSource.Create(ConnectionString!);
         await Sql($"CREATE TABLE {_table} (id bigserial PRIMARY KEY, v text NOT NULL UNIQUE)");
         var csb = new NpgsqlConnectionStringBuilder(ConnectionString) { Multiplexing = false };
-        return new Writer(NpgsqlDataSource.Create(csb.ConnectionString));
+        return new Writer(lockTimeout is { } t ? Db.WriterSource(csb, 2, t) : NpgsqlDataSource.Create(csb.ConnectionString));
     }
 
     async Task<object?> Sql(string sql)
@@ -95,6 +96,50 @@ public sealed class WriterTests : IAsyncDisposable
             else Assert.Equal(values[i], await tasks[i]);
         }
         Assert.Equal(["x", "y", "a", "b", "c"], await Values());
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task WritesPastTheQueueLimitAreRefusedAtOnceAndTheQueuedOnesCommit()
+    {
+        var w = await NewWriter();
+        var values = Enumerable.Range(0, Writer.MaxQueued).Select(i => $"q{i}").ToArray();
+        var queued = values.Select(v => Run(w, v)).ToArray();
+        var refused = Run(w, "one-too-many");
+
+        Assert.True(refused.IsFaulted, "refused without waiting for a loop");
+        await Assert.ThrowsAsync<ServerBusyException>(() => refused);
+        Assert.Equal(Writer.MaxQueued, w.Queued);
+        w.Start(2);
+        Assert.Equal(values, await Task.WhenAll(queued));
+        Assert.Equal(0, w.Queued);
+        Assert.Equal("room-again", await Run(w, "room-again"));
+        Assert.Equal(Writer.MaxQueued + 1, (await Values()).Length);
+        Assert.DoesNotContain("one-too-many", await Values());
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task AWriteBlockedPastTheLockTimeoutFailsAloneAndItsGroupCommits()
+    {
+        var timeout = TimeSpan.FromMilliseconds(300);
+        var w = await NewWriter(timeout);
+        await Sql($"INSERT INTO {_table} (v) VALUES ('locked')");
+        await using var holder = await _db!.OpenConnectionAsync();
+        await using var tx = await holder.BeginTransactionAsync();
+        await using (var lockRow = new NpgsqlCommand($"SELECT v FROM {_table} WHERE v = 'locked' FOR UPDATE", holder, tx))
+            await lockRow.ExecuteScalarAsync();
+
+        var blocked = w.Run(Db.Command($"UPDATE {_table} SET v = 'moved' WHERE v = 'locked' RETURNING v"), r => r?.GetString(0));
+        var free = Run(w, "free");
+        var sw = Stopwatch.StartNew();
+        w.Start(1);
+
+        var e = await Assert.ThrowsAsync<PostgresException>(() => blocked);
+        Assert.Equal(PostgresErrorCodes.LockNotAvailable, e.SqlState);
+        Assert.Equal("free", await free);
+        // one wait for the lock, not the 30 s statement timeout
+        Assert.InRange(sw.Elapsed, timeout, TimeSpan.FromSeconds(10));
+        await tx.RollbackAsync();
+        Assert.Equal(["locked", "free"], await Values());
     }
 
     [Fact(Timeout = 30_000)]

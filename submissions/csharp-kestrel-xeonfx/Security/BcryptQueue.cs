@@ -23,7 +23,13 @@ public sealed class BcryptQueue
         public readonly long Enqueued = Stopwatch.GetTimestamp();
     }
 
-    readonly BlockingCollection<Pending> _jobs = new();
+    /// <summary>
+    /// Jobs allowed to wait per worker. A worker runs about 4 hashes per 30-90 ms, so this is several seconds of
+    /// work, past which a login would time out in the queue anyway: later ones are refused at once (503).
+    /// </summary>
+    public const int MaxQueuedPerThread = 256;
+
+    readonly BlockingCollection<Pending> _jobs;
     readonly Lock _collecting = new();
     readonly long _window;
     readonly int _nice;
@@ -38,19 +44,28 @@ public sealed class BcryptQueue
     {
         _window = (long)(window.TotalSeconds * Stopwatch.Frequency);
         _nice = nice;
+        _jobs = new BlockingCollection<Pending>(MaxQueuedPerThread * threads);
         for (int i = 0; i < threads; i++)
             new Thread(Work) { IsBackground = true, Name = $"bcrypt-{i}" }.Start();
     }
+
+    /// <summary>Jobs waiting for a worker.</summary>
+    public int Queued => _jobs.Count;
 
     /// <summary>Batches run so far.</summary>
     public long Batches => Interlocked.Read(ref _batches);
 
     /// <summary>Completes with <paramref name="job"/> once it has run; cancelled, unrun, if
-    /// <paramref name="aborted"/> fires before a worker takes it.</summary>
+    /// <paramref name="aborted"/> fires before a worker takes it; fails with <see cref="ServerBusyException"/> at once
+    /// when the queue is full.</summary>
     public Task<BcryptJob> RunAsync(BcryptJob job, CancellationToken aborted)
     {
         var p = new Pending(job, aborted);
-        _jobs.Add(p);
+        if (!_jobs.TryAdd(p))
+        {
+            Interlocked.Increment(ref Stats.BcryptRefused);
+            return Task.FromException<BcryptJob>(new ServerBusyException("too many logins are waiting"));
+        }
         return p.Task;
     }
 
@@ -74,6 +89,8 @@ public sealed class BcryptQueue
             int n;
             lock (_collecting) n = Collect(batch);
             Interlocked.Increment(ref _batches);
+            Interlocked.Increment(ref Stats.BcryptBatches);
+            Interlocked.Add(ref Stats.BcryptJobs, n);
             for (int i = 0; i < n; i++) jobs[i] = batch[i].Job;
             try
             {
@@ -106,10 +123,12 @@ public sealed class BcryptQueue
                 int ms = left > 0 ? (int)((left * 1000 + Stopwatch.Frequency - 1) / Stopwatch.Frequency) : 0;
                 if (!_jobs.TryTake(out p, ms)) break;
             }
+            Stats.Max(ref Stats.BcryptWaitTicksMax, Stopwatch.GetTimestamp() - p.Enqueued);
             // A client that gave up while its job was queued gets no hash: under overload that CPU goes to the
             // logins still waiting.
             if (p.Aborted.IsCancellationRequested)
             {
+                Interlocked.Increment(ref Stats.BcryptSkipped);
                 p.SetCanceled(p.Aborted);
                 continue;
             }

@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using Conduit.Endpoints;
 using Conduit.Http;
 using Microsoft.AspNetCore.Http;
+using Npgsql;
 
 namespace Conduit;
 
@@ -20,12 +21,31 @@ public static class Router
             ctx.Response.Clear();
             await Responses.Error(ctx, e.StatusCode, e.StatusCode == StatusCodes.Status413PayloadTooLarge ? "request body too large" : "bad request");
         }
+        catch (ServerBusyException e) when (!ctx.Response.HasStarted)
+        {
+            // A full queue refused it (counted in the stats line), not a fault: no log line per refusal.
+            await Busy(ctx, e.Message);
+        }
+        catch (PostgresException e) when (!ctx.Response.HasStarted && !ctx.RequestAborted.IsCancellationRequested
+                                          && e.SqlState is PostgresErrorCodes.LockNotAvailable or PostgresErrorCodes.QueryCanceled)
+        {
+            // A lock or statement timeout: the database was blocked, the request itself may well succeed again.
+            Console.Error.WriteLine($"busy: {ctx.Request.Method} {ctx.Request.Path}: {e.SqlState} {e.MessageText}");
+            await Busy(ctx, "the database is busy");
+        }
         catch (Exception e) when (!ctx.Response.HasStarted && !ctx.RequestAborted.IsCancellationRequested)
         {
             Console.Error.WriteLine($"error: {ctx.Request.Method} {ctx.Request.Path}: {e}");
             ctx.Response.Clear();
             await Responses.Error(ctx, 500, "internal error");
         }
+    }
+
+    static Task Busy(HttpContext ctx, string message)
+    {
+        ctx.Response.Clear();
+        ctx.Response.Headers.RetryAfter = "1";
+        return Responses.Error(ctx, StatusCodes.Status503ServiceUnavailable, message);
     }
 
     static Task Dispatch(HttpContext ctx)

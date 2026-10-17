@@ -18,27 +18,19 @@ namespace Conduit.Tests.Endpoints;
 /// the viewer follows n3 and favorites n5's articles. Ids grow with insertion, so the newest article has the largest id.
 /// Author "esc" has the two oldest articles: esc-1 with five tags that need escaping or are not ASCII, esc-2 with none.
 /// </summary>
-[Collection(Conduit.Tests.Http.JsonOutTests.Pool)]
+[Collection(ServerState.Collection)]
 public sealed class ListTests : IClassFixture<ListTests.Data>
 {
     static readonly int[] Sizes = [0, 1, 3, 5, 999, 1000, 1001];
 
-    public sealed class Data : IAsyncLifetime
+    public sealed class Data : TestSchema
     {
-        public readonly string Schema = "list_test_" + Guid.NewGuid().ToString("N");
         public long Viewer;
-        NpgsqlDataSource? _admin;
 
-        public async ValueTask InitializeAsync()
+        protected override async Task Seed()
         {
-            string? cs = Environment.GetEnvironmentVariable("CONDUIT_TEST_DB");
-            if (cs is null) return;
-            _admin = NpgsqlDataSource.Create(cs);
-            string schema = await File.ReadAllTextAsync(SchemaFile());
-            await Exec($"CREATE SCHEMA {Schema}; SET search_path = {Schema}; {schema}");
             string sizes = string.Join(",", Sizes);
             await Exec($"""
-                SET search_path = {Schema};
                 INSERT INTO users (username, email, password_hash) VALUES ('viewer', 'viewer@x', 'h'), ('esc', 'esc@x', 'h');
                 INSERT INTO articles (slug, author_id, title, description, body)
                     SELECT 'esc-' || i, u.id, 'title', 'description', 'body' FROM users u, generate_series(1, 2) i WHERE u.username = 'esc' ORDER BY i;
@@ -56,35 +48,7 @@ public sealed class ListTests : IClassFixture<ListTests.Data>
                 INSERT INTO favorites (user_id, article_id)
                     SELECT v.id, a.id FROM users v, articles a JOIN users u ON u.id = a.author_id WHERE v.username = 'viewer' AND u.username = 'n5';
                 """);
-            await using (var cmd = _admin.CreateCommand($"SELECT id FROM {Schema}.users WHERE username = 'viewer'"))
-                Viewer = (long)(await cmd.ExecuteScalarAsync())!;
-            var csb = new NpgsqlConnectionStringBuilder(cs) { SearchPath = Schema };
-            Db.Plan(csb);
-            Db.Source = NpgsqlDataSource.Create(csb.ConnectionString);
-            Jwt.Init("list-tests");
-        }
-
-        async Task Exec(string sql)
-        {
-            await using var cmd = _admin!.CreateCommand(sql);
-            await cmd.ExecuteNonQueryAsync();
-        }
-
-        static string SchemaFile()
-        {
-            for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
-            {
-                string f = Path.Combine(d.FullName, "schema.sql");
-                if (File.Exists(f)) return f;
-            }
-            throw new FileNotFoundException("schema.sql not found above " + AppContext.BaseDirectory);
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            if (_admin is null) return;
-            await Exec($"DROP SCHEMA {Schema} CASCADE");
-            await _admin.DisposeAsync();
+            Viewer = await Scalar<long>("SELECT id FROM users WHERE username = 'viewer'");
         }
     }
 
@@ -96,7 +60,7 @@ public sealed class ListTests : IClassFixture<ListTests.Data>
 
     async Task<(int Status, Article[] Articles, long Count)> Get(string path, string query, bool signedIn = true)
     {
-        Assert.SkipWhen(Environment.GetEnvironmentVariable("CONDUIT_TEST_DB") is null, "CONDUIT_TEST_DB is not set");
+        TestSchema.Require();
         var ctx = new DefaultHttpContext();
         ctx.Request.Method = "GET";
         ctx.Request.Path = path;
@@ -227,7 +191,7 @@ public sealed class ListTests : IClassFixture<ListTests.Data>
     [Fact]
     public async Task TagsAreOneSortedArrayWrittenAsTheOtherResponsesAre()
     {
-        Assert.SkipWhen(Environment.GetEnvironmentVariable("CONDUIT_TEST_DB") is null, "CONDUIT_TEST_DB is not set");
+        TestSchema.Require();
         var ctx = new DefaultHttpContext();
         ctx.Request.Method = "GET";
         ctx.Request.Path = "/api/tags";
@@ -243,7 +207,7 @@ public sealed class ListTests : IClassFixture<ListTests.Data>
     [Fact]
     public async Task AnArticlesTagListIsItsSortedEscapedTagsOrEmpty()
     {
-        Assert.SkipWhen(Environment.GetEnvironmentVariable("CONDUIT_TEST_DB") is null, "CONDUIT_TEST_DB is not set");
+        TestSchema.Require();
         var ctx = new DefaultHttpContext();
         ctx.Request.Method = "GET";
         ctx.Request.Path = "/api/articles";
@@ -276,7 +240,7 @@ public sealed class ListTests : IClassFixture<ListTests.Data>
     [InlineData("/api/tags", "")]
     public async Task AFailingQueryAnswers500AndLosesNoPooledBuffer(string path, string query)
     {
-        Assert.SkipWhen(Environment.GetEnvironmentVariable("CONDUIT_TEST_DB") is null, "CONDUIT_TEST_DB is not set");
+        TestSchema.Require();
         // two buffers wait in the pool, so the error response takes one from it rather than a new one
         JsonOut a = JsonOut.Rent(), b = JsonOut.Rent();
         a.Dispose();

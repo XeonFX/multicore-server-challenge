@@ -3,12 +3,9 @@ using Xunit;
 
 namespace Conduit.Tests.Http;
 
-[Collection(JsonOutTests.Pool)]
+[Collection(ServerState.Collection)]
 public class JsonOutTests
 {
-    /// <summary>Tests that count the pool's bytes run one at a time.</summary>
-    public const string Pool = "JsonOut pool";
-
     [Fact]
     public void ThePoolKeepsNoMoreThanItsBudgetAfterABurst()
     {

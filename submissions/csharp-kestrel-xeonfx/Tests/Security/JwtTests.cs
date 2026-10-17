@@ -9,6 +9,8 @@ using Xunit;
 
 namespace Conduit.Tests.Security;
 
+// Sets the JWT key, which the endpoint tests sign and verify with.
+[Collection(ServerState.Collection)]
 public class JwtTests
 {
     const string Secret = "multicore-server-challenge";

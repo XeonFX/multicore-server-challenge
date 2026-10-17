@@ -33,7 +33,7 @@ public static class Profiles
         {
             cmd.Parameters.Add(Db.P(viewer));
             cmd.Parameters.Add(Db.P(username));
-            await using var r = await cmd.ExecuteReaderAsync();
+            await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
             if (!await r.ReadAsync()) { await Responses.Error(ctx, 404, "profile not found"); return; }
             j = Profile(r, r.GetBoolean(3));
         }

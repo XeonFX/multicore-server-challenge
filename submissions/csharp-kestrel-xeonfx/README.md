@@ -25,7 +25,8 @@ DATABASE_URL=postgres://conduit:conduit@127.0.0.1:5432/conduit JWT_SECRET=dev-se
 
 Environment: `DATABASE_URL`, `JWT_SECRET` (required), `HOST` (127.0.0.1), `PORT` (3000), `DB_POOL_SIZE`
 (2 per core), `DB_MULTIPLEXING` (1), `DB_WRITERS` (2), `BCRYPT_THREADS` (one per two cores, at least 1), `BCRYPT_NICE` (0),
-`BCRYPT_BATCH_MS` (200), `DOTNET_GCgen0size` (64 MB, set in `start.sh`).
+`BCRYPT_BATCH_MS` (200), `STATS_SECONDS` (10; 0 turns the stats line off), `DOTNET_GCgen0size` (64 MB, set in
+`start.sh`).
 
 ## Layout
 
@@ -76,6 +77,13 @@ Every response is byte-identical to the reference (the conformance transcript); 
 - **One statement per request.** Follow, unfollow, favorite, unfavorite, update and delete check, write and
   read back in one statement with CTEs. Article lists send the page and its count as one `NpgsqlBatch`
   (one round trip, one implicit transaction). Create sends insert, tags, links and read-back together.
+- **Favorite counts under concurrent toggles.** The read half of a favorite toggle sees the statement's snapshot,
+  which misses a favorite another transaction committed while the insert waited for it (`ON CONFLICT` and
+  `DELETE` look past the snapshot). After the statement the viewer's favorite exists (or not, for unfavorite)
+  whoever wrote it, so the count is the snapshot's, corrected by whether the snapshot holds that row. Counting
+  the rows the write changed instead returned 0 for one favorite, 1 after it was removed, and counted a
+  favorite twice when it replaced one removed meanwhile; the tests replay each race with a lock held by a
+  second connection.
 - **Page first, then decorate.** Lists pick the page's ids with an index-only scan, then join and compute
   tags, favorite counts and flags for those rows only, not for the `OFFSET` rows before them.
 - **A constant bound on the page.** With `LIMIT $2` the generic plan expects a tenth of the table and puts a
@@ -108,9 +116,15 @@ Every response is byte-identical to the reference (the conformance transcript); 
   it commits (three times if the writes before the failing one then fail together and each runs alone). A write
   that loses a deadlock to the other loop's group runs again. A write whose client has gone is dropped if no
   group has taken it yet. A broken connection fails the writes it held, since whether they committed is
-  unknown, and the loop reconnects. On 4 CPUs at 12,000 users: 19,100 to 22,500 requests per second, app CPU
+  unknown, and the loop reconnects. A write waits at most 2 s (`lock_timeout`) for a row lock someone else holds:
+  then it alone fails (503), instead of holding its whole group for the 30 s statement timeout. At most 4,096
+  writes wait for a loop; more are refused at once (503 with `Retry-After`), so a stalled database can't pile up
+  requests and their bodies. Under the workload the writes in flight stay in the tens. On 4 CPUs at 12,000 users: 19,100 to 22,500 requests per second, app CPU
   per request 0.073 to 0.053 ms, Postgres 0.134 to 0.124 ms.
 - **No reset on close, no enlistment, no TLS** on the loopback connection.
+- **A request whose client has gone sends nothing.** Reads and body parses take the request's abort token. Npgsql
+  stops honouring it once a multiplexed command is queued (it can't cancel one statement of a shared
+  connection), so a read already sent still runs to its end.
 
 ### bcrypt
 
@@ -143,7 +157,8 @@ much as a hundred or more other requests.
   run alone at full cost. Logins are one request in a thousand, so the wait doesn't reach the p95. At 12,000
   users with a tenth of the think time, where hashes queue anyway, 0, 80 and 200 ms were within noise.
 - **Abandoned logins are skipped.** A job whose client disconnected while it queued is dropped before it is
-  hashed, so under overload the CPU goes to the logins still waiting.
+  hashed, so under overload the CPU goes to the logins still waiting. At most 256 jobs per worker wait (several
+  seconds of hashing); more are refused at once (503).
 - **Unknown emails cost the same** as a wrong password: the login checks against a hash of a random password,
   so response times don't tell which emails have accounts.
 
@@ -166,7 +181,12 @@ throwing.
 - JWT verification allocates nothing: it checks the token's alphabet, decodes into stack buffers, signs with a
   keyed HMAC kept per thread, compares in constant time, and accepts only HS256 tokens with a numeric `sub`
   and an unexpired `exp`. A header equal to the one this server issues skips the header parse; any other is
-  parsed and must say HS256.
+  parsed and must say HS256. An `Authorization` header sent empty is a 401 like any other invalid one; only a
+  request without the header is anonymous.
+- **A stats line** every `STATS_SECONDS` on stdout: writes queued and their longest wait, groups (average and
+  largest size), commit time, reruns, refusals; bcrypt queue, wait, lanes per batch, skipped jobs; GC counts and
+  pause time, allocation rate, heap size, process CPU, thread pool size and backlog. Only the writer loops and
+  bcrypt workers update its counters; the read path doesn't touch them.
 - **Not used: inline socket completions** (`DOTNET_SYSTEM_NET_SOCKETS_INLINE_COMPLETIONS=1`, continuations on
   the epoll thread). Under full load the CPU per request was the same, and the median login took 5.7 s instead
   of 1.7 s.

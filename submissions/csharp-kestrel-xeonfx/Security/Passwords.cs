@@ -22,6 +22,9 @@ public static class Passwords
 
     public static void Init(int threads, TimeSpan batchWindow = default, int nice = 0) => _queue = new BcryptQueue(threads, batchWindow, nice);
 
+    /// <summary>Hashes waiting for a worker.</summary>
+    public static int Queued => _queue.Queued;
+
     /// <summary>bcrypt ignores everything after 72 bytes; such passwords are refused, not truncated.</summary>
     public static bool TooLong(string password) => Encoding.UTF8.GetByteCount(password) > Bcrypt.MaxKeyBytes;
 

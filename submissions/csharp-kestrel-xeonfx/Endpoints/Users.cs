@@ -79,7 +79,7 @@ public static class Users
         await using (var cmd = Db.Source.CreateCommand(Sql.Login))
         {
             cmd.Parameters.Add(Db.P(email));
-            await using var r = await cmd.ExecuteReaderAsync();
+            await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
             if (await r.ReadAsync())
             {
                 id = r.GetInt64(0);
@@ -98,7 +98,7 @@ public static class Users
         if (viewer <= 0) { await Responses.Unauthorized(ctx); return; }
         await using var cmd = Db.Source.CreateCommand(Sql.CurrentUser);
         cmd.Parameters.Add(Db.P(viewer));
-        await using var r = await cmd.ExecuteReaderAsync();
+        await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
         if (!await r.ReadAsync()) { await Responses.Unauthorized(ctx); return; }
         await Send(ctx, 200, User.Read(r, 0), Auth.Token(ctx));
     }

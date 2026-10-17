@@ -117,17 +117,21 @@ public static class Sql
         "d AS (DELETE FROM articles WHERE id = (SELECT id FROM t WHERE author_id = $1)) " +
         "SELECT author_id FROM t";
 
-    // The favorite toggles write and read in one statement. Its snapshot can't see its own write, so the count
-    // is adjusted by the rows the write changed; favorited is what the write just made true.
+    // The favorite toggles write and read in one statement, and the read sees the statement's snapshot: not the
+    // write, and not what a concurrent transaction committed while the write waited for it (ON CONFLICT and
+    // DELETE look past the snapshot). After the statement the viewer's favorite exists (favorite) or not
+    // (unfavorite), whoever wrote or removed it, so the count is the snapshot's corrected by whether the snapshot
+    // holds that row. Counting the rows the write changed instead goes wrong when a concurrent toggle did the work.
+    const string ViewerFavoriteInSnapshot = "EXISTS (SELECT 1 FROM favorites f WHERE f.article_id = a.id AND f.user_id = $1)";
     public static readonly string Favorite =
         "WITH t AS (SELECT id FROM articles WHERE slug = $2), " +
-        "w AS (INSERT INTO favorites (user_id, article_id) SELECT $1, id FROM t ON CONFLICT DO NOTHING RETURNING 1) " +
-        $"SELECT {Columns(true, "true", $"({FavoritesCount} + (SELECT count(*) FROM w))")} " +
+        "w AS (INSERT INTO favorites (user_id, article_id) SELECT $1, id FROM t ON CONFLICT DO NOTHING) " +
+        $"SELECT {Columns(true, "true", $"({FavoritesCount} + (NOT {ViewerFavoriteInSnapshot})::int)")} " +
         "FROM articles a JOIN users u ON u.id = a.author_id WHERE a.id = (SELECT id FROM t)";
     public static readonly string Unfavorite =
         "WITH t AS (SELECT id FROM articles WHERE slug = $2), " +
-        "w AS (DELETE FROM favorites WHERE user_id = $1 AND article_id = (SELECT id FROM t) RETURNING 1) " +
-        $"SELECT {Columns(true, "false", $"({FavoritesCount} - (SELECT count(*) FROM w))")} " +
+        "w AS (DELETE FROM favorites WHERE user_id = $1 AND article_id = (SELECT id FROM t)) " +
+        $"SELECT {Columns(true, "false", $"({FavoritesCount} - ({ViewerFavoriteInSnapshot})::int)")} " +
         "FROM articles a JOIN users u ON u.id = a.author_id WHERE a.id = (SELECT id FROM t)";
 
     // ---------- comments ----------

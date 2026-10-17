@@ -2,7 +2,8 @@
 # Runs the server in the foreground. Config: DATABASE_URL, JWT_SECRET, HOST, PORT
 # (optional: DB_POOL_SIZE, default 2 per core; DB_MULTIPLEXING=0 turns Npgsql multiplexing off;
 # BCRYPT_THREADS, default one per two cores, at least 1; BCRYPT_NICE, default 0;
-# BCRYPT_BATCH_MS, how long a hash waits for others to share its run, default 200).
+# BCRYPT_BATCH_MS, how long a hash waits for others to share its run, default 200; DB_WRITERS, writer loops,
+# default 2; STATS_SECONDS, seconds between stats lines on stdout, default 10, 0 for none).
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 export DOTNET_ROOT="${DOTNET_ROOT:-/usr/local/dotnet}" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1

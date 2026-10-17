@@ -11,7 +11,7 @@ public static class Body
     {
         try
         {
-            return await JsonDocument.ParseAsync(ctx.Request.Body);
+            return await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ctx.RequestAborted);
         }
         catch (JsonException)
         {
