@@ -47,13 +47,13 @@ seed, think-scale 1 (the workload's real 7 s). Each run copies a fresh database,
 500 users for 3 minutes, ramps for 60 s and measures 60 s. Pass is p95 < 500 ms, p99 < 1 s, errors < 1%.
 Memory is the box's peak.
 
-| Users | This version | b2a554c (first version of this PR) | Go example |
-|---|---|---|---|
-| 20,000 | | | pass: p95 3 ms, p99 10 ms, 54% CPU |
-| 30,000 | | | pass: p95 8 ms, p99 15 ms, 84% CPU |
-| 60,000 | pass: p95 23 ms, p99 89 ms, 73% CPU, 3.4 GB | | |
-| 80,000 | pass: p95 32 ms, p99 105 ms, 88% CPU, 3.9 GB | pass: p95 59 ms, p99 149 ms, 96% CPU, 4.2 GB | |
-| 100,000 | **pass: p95 273 ms, p99 313 ms**, 98% CPU, 4.1 GB, 25,280 req/s | fail: p95 1,198 ms, p99 1,880 ms, 5.4 GB | |
+| Version | Most users passed | p95 / p99 there | CPU | Memory | Next step up |
+|---|---|---|---|---|---|
+| This version | **100,000** (the rig's maximum) | 273 / 313 ms | 98% | 4.1 GB | not reachable on this rig |
+| First version of this PR (b2a554c) | 80,000 | 59 / 149 ms | 96% | 4.2 GB | 100,000 fails: p95 1,198 ms, p99 1,880 ms |
+| Go example | 30,000 | 8 / 15 ms | 84% | 2.7 GB | not tried |
+
+This version at 60,000 and 80,000: p95 23 and 32 ms, p99 89 and 105 ms, 73% and 88% CPU. At 100,000 it served 25,280 requests per second.
 
 No errors in any run. 100,000 users is the most this rig can drive: one load machine opens about 64k connections
 per target address, and the target has two. At 100,000 the box is at 98% CPU, 70 points of it Postgres, so the
