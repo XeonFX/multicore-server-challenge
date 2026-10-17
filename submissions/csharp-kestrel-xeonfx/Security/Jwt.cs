@@ -4,8 +4,9 @@ using System.Buffers.Text;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Conduit.Http;
 
-namespace Conduit;
+namespace Conduit.Security;
 
 /// <summary>HS256 JWTs: {"sub": "&lt;id&gt;", "iat", "exp": iat + 30 days}. Every request verifies signature and exp.</summary>
 public static class Jwt
@@ -72,8 +73,12 @@ public static class Jwt
         if (!Decode(sig, given, out int sigLen) || sigLen != 32) return 0;
         if (!CryptographicOperations.FixedTimeEquals(mac, given[..32])) return 0;
 
-        Span<byte> header = stackalloc byte[d1];
-        if (!Decode(token[..d1], header, out int headerLen) || !HeaderIsHs256(header[..headerLen])) return 0;
+        // The header this server issues is compared as text; any other is parsed.
+        if (!token[..d1].SequenceEqual(HeaderB64))
+        {
+            Span<byte> header = stackalloc byte[d1];
+            if (!Decode(token[..d1], header, out int headerLen) || !HeaderIsHs256(header[..headerLen])) return 0;
+        }
         ReadOnlySpan<char> payloadB64 = token[(d1 + 1)..d2];
         Span<byte> payload = stackalloc byte[payloadB64.Length];
         if (!Decode(payloadB64, payload, out int payloadLen)) return 0;

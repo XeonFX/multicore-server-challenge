@@ -1,11 +1,12 @@
 using System;
+using Conduit.Http;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
 using Microsoft.AspNetCore.Http;
 using Xunit;
 
-namespace Conduit.Tests;
+namespace Conduit.Tests.Http;
 
 /// <summary>Query parsing follows Go's url.Values (the reference server) and the challenge's page rules.</summary>
 public class QueryTests

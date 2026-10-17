@@ -1,48 +1,4 @@
-using System;
-using Npgsql;
-using NpgsqlTypes;
-
-namespace Conduit;
-
-public static class Db
-{
-    public static NpgsqlDataSource Source = null!;
-
-    public static void Init(string databaseUrl, int poolSize, bool multiplexing)
-    {
-        var uri = new Uri(databaseUrl);
-        string[] userInfo = uri.UserInfo.Split(':', 2);
-        var csb = new NpgsqlConnectionStringBuilder
-        {
-            Host = uri.Host,
-            Port = uri.Port > 0 ? uri.Port : 5432,
-            Database = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/')),
-            Username = Uri.UnescapeDataString(userInfo[0]),
-            Password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : null,
-            SslMode = SslMode.Disable,
-            // Many requests share each connection: commands from concurrent requests are pipelined onto a few
-            // connections instead of each request holding one, so Postgres runs few busy backends.
-            Multiplexing = multiplexing,
-            MaxPoolSize = poolSize,
-            NoResetOnClose = true,
-            Enlist = false,
-            // Every statement is prepared once per connection (Parse/plan once, then only Bind/Execute).
-            MaxAutoPrepare = 64,
-            AutoPrepareMinUsages = 2,
-            // Session settings. The reference queries take LIMIT/OFFSET as parameters, which makes Postgres's
-            // plan cache keep choosing custom plans and re-plan every execution. Our statements are written so
-            // the generic plan is the right plan, so it is planned once per connection. JIT never pays off
-            // for statements this short.
-            Options = "-c plan_cache_mode=force_generic_plan -c jit=off",
-        };
-        Source = NpgsqlDataSource.Create(csb.ConnectionString);
-    }
-
-    public static NpgsqlParameter<long> P(long v) => new() { TypedValue = v };
-    public static NpgsqlParameter<string> P(string v) => new() { TypedValue = v };
-    public static NpgsqlParameter<string[]> P(string[] v) => new() { TypedValue = v };
-    public static NpgsqlParameter Text(string? v) => new() { NpgsqlDbType = NpgsqlDbType.Text, Value = (object?)v ?? DBNull.Value };
-}
+namespace Conduit.Data;
 
 /// <summary>
 /// The SQL. Responses match SPEC.md's reference SQL; the statements differ where that is cheaper for Postgres:
@@ -55,7 +11,9 @@ public static class Sql
 {
     static string Slugify(string x) => $"trim(both '-' from lower(regexp_replace({x}, '[^A-Za-z0-9]+', '-', 'g')))";
 
-    const string TagList = "ARRAY(SELECT (SELECT t.name FROM tags t WHERE t.id = at.tag_id) FROM article_tags at WHERE at.article_id = a.id ORDER BY 1)";
+    // The tag list as JSON text, written into the response as is: cheaper for both sides than a text[] column
+    // (feed CPU per request fell 11%). An article without tags gets "[]".
+    const string TagList = "convert_to(array_to_json(ARRAY(SELECT (SELECT t.name FROM tags t WHERE t.id = at.tag_id) FROM article_tags at WHERE at.article_id = a.id ORDER BY 1))::text, 'UTF8')";
     const string FavoritesCount = "(SELECT count(*) FROM favorites f WHERE f.article_id = a.id)";
     const string Favorited = "($1 <> 0 AND EXISTS (SELECT 1 FROM favorites f WHERE f.article_id = a.id AND f.user_id = $1))";
     /// <summary>Whether the viewer follows <paramref name="followee"/> (false for an anonymous viewer).</summary>
@@ -63,9 +21,9 @@ public static class Sql
         $"($1 <> 0 AND EXISTS (SELECT 1 FROM follows fo WHERE fo.follower_id = $1 AND fo.followee_id = {followee}))";
 
     /// <summary>Article columns, read by Articles.Write in this order.</summary>
-    static string Columns(bool body, string favorited = Favorited, string favoritesCount = FavoritesCount) =>
+    static string Columns(bool body, string favorited = Favorited, string favoritesCount = FavoritesCount, string? following = null) =>
         $"a.slug, a.title, a.description, {(body ? "a.body, " : "")}a.created_at, a.updated_at, {TagList}, {favoritesCount}, {favorited}, " +
-        $"u.username, u.bio, u.image, {Following("a.author_id")}";
+        $"u.username, u.bio, u.image, {following ?? Following("a.author_id")}";
 
     // ---------- users ----------
 
@@ -92,30 +50,40 @@ public static class Sql
 
     public enum ListKind { Global, Tag, Author, Favorited, Feed }
 
-    static string Page(string ids) =>
-        $"SELECT {Columns(false)} FROM ({ids}) p JOIN articles a ON a.id = p.id JOIN users u ON u.id = a.author_id ORDER BY a.id DESC";
+    /// <summary>
+    /// One list page and its capped count in one statement: the count row, with the page joined to it (an empty
+    /// page leaves one row whose page columns are NULL). The page's inner LIMIT is the constant 100 (the largest
+    /// limit allowed) and $2 applies outside it: with a bare LIMIT $2 the generic plan expects a tenth of the table
+    /// and memoizes the users join, which zeroes a hash table of that size on every execution.
+    /// </summary>
+    static string PageWithCount(string count, string ids, string? following = null) =>
+        $"WITH c AS ({count}) SELECT p.*, c.n FROM c LEFT JOIN LATERAL (" +
+        $"SELECT {Columns(false, following: following)}, a.id FROM (SELECT id FROM ({ids} LIMIT 100 OFFSET $3) b ORDER BY id DESC LIMIT $2) p " +
+        "JOIN articles a ON a.id = p.id JOIN users u ON u.id = a.author_id ORDER BY a.id DESC) p ON true ORDER BY p.id DESC";
 
+    /// <summary>min(1000, rows): small sets are counted, a 1000th row proves the cap without counting to it.</summary>
+    static string Capped(string from, string key) =>
+        $"SELECT CASE WHEN EXISTS (SELECT 1 {from} ORDER BY {key} OFFSET 999 LIMIT 1) THEN 1000::bigint ELSE (SELECT count(*) {from}) END AS n";
+
+    static string Capped(string select) => $"SELECT count(*) AS n FROM ({select} LIMIT 1000) s";
+
+    /// <summary>By <see cref="ListKind"/>. Columns: the article columns, a.id, then the count.</summary>
     public static readonly string[] List =
     [
-        Page("SELECT id FROM articles ORDER BY id DESC LIMIT $2 OFFSET $3"),
-        Page("SELECT at.article_id AS id FROM article_tags at WHERE at.tag_id = (SELECT t.id FROM tags t WHERE t.name = $4) " +
-             "ORDER BY at.article_id DESC LIMIT $2 OFFSET $3"),
-        Page("SELECT a2.id FROM articles a2 WHERE a2.author_id = (SELECT au.id FROM users au WHERE au.username = $4) " +
-             "ORDER BY a2.id DESC LIMIT $2 OFFSET $3"),
-        Page("SELECT f.article_id AS id FROM favorites f WHERE f.user_id = (SELECT fu.id FROM users fu WHERE fu.username = $4) " +
-             "ORDER BY f.article_id DESC LIMIT $2 OFFSET $3"),
-        Page("SELECT x.id FROM follows fo CROSS JOIN LATERAL (SELECT a2.id FROM articles a2 WHERE a2.author_id = fo.followee_id " +
-             "ORDER BY a2.id DESC LIMIT $4) x WHERE fo.follower_id = $1 ORDER BY x.id DESC LIMIT $2 OFFSET $3"),
-    ];
-
-    /// <summary>Capped counts. $1 is the filter (feed: the viewer).</summary>
-    public static readonly string[] Count =
-    [
-        "SELECT count(*) FROM (SELECT 1 FROM articles a LIMIT 1000) s",
-        "SELECT count(*) FROM (SELECT 1 FROM article_tags at WHERE at.tag_id = (SELECT t.id FROM tags t WHERE t.name = $1) LIMIT 1000) s",
-        "SELECT count(*) FROM (SELECT 1 FROM articles a WHERE a.author_id = (SELECT u.id FROM users u WHERE u.username = $1) LIMIT 1000) s",
-        "SELECT count(*) FROM (SELECT 1 FROM favorites f WHERE f.user_id = (SELECT fu.id FROM users fu WHERE fu.username = $1) LIMIT 1000) s",
-        "SELECT count(*) FROM (SELECT 1 FROM articles a WHERE a.author_id IN (SELECT fo.followee_id FROM follows fo WHERE fo.follower_id = $1) LIMIT 1000) s",
+        PageWithCount(Capped("FROM articles a", "a.id"), "SELECT id FROM articles ORDER BY id DESC"),
+        PageWithCount(Capped("FROM article_tags at WHERE at.tag_id = (SELECT t.id FROM tags t WHERE t.name = $4)", "at.article_id"),
+            "SELECT at.article_id AS id FROM article_tags at WHERE at.tag_id = (SELECT t.id FROM tags t WHERE t.name = $4) " +
+            "ORDER BY at.article_id DESC"),
+        PageWithCount(Capped("SELECT 1 FROM articles a WHERE a.author_id = (SELECT u.id FROM users u WHERE u.username = $4)"),
+            "SELECT a2.id FROM articles a2 WHERE a2.author_id = (SELECT au.id FROM users au WHERE au.username = $4) " +
+            "ORDER BY a2.id DESC"),
+        PageWithCount(Capped("SELECT 1 FROM favorites f WHERE f.user_id = (SELECT fu.id FROM users fu WHERE fu.username = $4)"),
+            "SELECT f.article_id AS id FROM favorites f WHERE f.user_id = (SELECT fu.id FROM users fu WHERE fu.username = $4) " +
+            "ORDER BY f.article_id DESC"),
+        // Being in the feed proves the viewer follows the author, in the same snapshot.
+        PageWithCount(Capped("SELECT 1 FROM articles a WHERE a.author_id IN (SELECT fo.followee_id FROM follows fo WHERE fo.follower_id = $1)"),
+            "SELECT x.id FROM follows fo CROSS JOIN LATERAL (SELECT a2.id FROM articles a2 WHERE a2.author_id = fo.followee_id " +
+            "ORDER BY a2.id DESC LIMIT $4) x WHERE fo.follower_id = $1 ORDER BY x.id DESC", following: "true"),
     ];
 
     // ---------- single articles ----------
@@ -127,7 +95,8 @@ public static class Sql
         "INSERT INTO articles (id, slug, author_id, title, description, body) " +
         $"SELECT n.id, {Slugify("$2")} || '-' || n.id, $1, $2, $3, $4 FROM (SELECT nextval(pg_get_serial_sequence('articles', 'id')) AS id) n";
     // New names are inserted in sorted order: two creates adding the same new tags then wait on each other in one
-    // order instead of deadlocking.
+    // order instead of deadlocking. Two writer groups can still deadlock across their creates; the writer runs the
+    // losing write again.
     public const string InsertTags = "INSERT INTO tags (name) SELECT DISTINCT unnest($1::text[]) ORDER BY 1 ON CONFLICT (name) DO NOTHING";
     public const string InsertArticleTags =
         "INSERT INTO article_tags (article_id, tag_id) SELECT currval(pg_get_serial_sequence('articles', 'id')), t.id FROM tags t WHERE t.name = ANY($1::text[])";
@@ -185,5 +154,7 @@ public static class Sql
 
     // ---------- tags ----------
 
-    public const string Tags = "SELECT name FROM tags ORDER BY name";
+    /// <summary>The tag names as one JSON array (NULL without tags), so the server copies it instead of a row per tag.
+    /// array_to_json, not json_agg: json_agg puts a space after every comma.</summary>
+    public const string Tags = "SELECT convert_to(array_to_json(array_agg(name ORDER BY name))::text, 'UTF8') FROM tags";
 }

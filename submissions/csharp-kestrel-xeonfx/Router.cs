@@ -1,7 +1,8 @@
 using System;
 using System.Threading.Tasks;
+using Conduit.Endpoints;
+using Conduit.Http;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Primitives;
 
 namespace Conduit;
 
@@ -17,26 +18,26 @@ public static class Router
         {
             // Kestrel rejected the request body: over MaxRequestBodySize (413) or malformed framing (400).
             ctx.Response.Clear();
-            await Http.Error(ctx, e.StatusCode, e.StatusCode == StatusCodes.Status413PayloadTooLarge ? "request body too large" : "bad request");
+            await Responses.Error(ctx, e.StatusCode, e.StatusCode == StatusCodes.Status413PayloadTooLarge ? "request body too large" : "bad request");
         }
         catch (Exception e) when (!ctx.Response.HasStarted && !ctx.RequestAborted.IsCancellationRequested)
         {
             Console.Error.WriteLine($"error: {ctx.Request.Method} {ctx.Request.Path}: {e}");
             ctx.Response.Clear();
-            await Http.Error(ctx, 500, "internal error");
+            await Responses.Error(ctx, 500, "internal error");
         }
     }
 
     static Task Dispatch(HttpContext ctx)
     {
         string path = ctx.Request.Path.Value ?? "";
-        if (!path.StartsWith("/api/", StringComparison.Ordinal)) return Http.NotFound(ctx);
+        if (!path.StartsWith("/api/", StringComparison.Ordinal)) return Responses.NotFound(ctx);
         ReadOnlySpan<char> rest = path.AsSpan(5);
         Span<Range> seg = stackalloc Range[5];
         int n = rest.Split(seg, '/');
-        if (n == seg.Length) return Http.NotFound(ctx); // deeper than any route
+        if (n == seg.Length) return Responses.NotFound(ctx); // deeper than any route
         for (int i = 0; i < n; i++)
-            if (rest[seg[i]].IsEmpty) return Http.NotFound(ctx);
+            if (rest[seg[i]].IsEmpty) return Responses.NotFound(ctx);
 
         string method = ctx.Request.Method;
         bool get = HttpMethods.IsGet(method), post = HttpMethods.IsPost(method),
@@ -49,7 +50,7 @@ public static class Router
             {
                 if (get) return Articles.List(ctx);
                 if (post) return Articles.Create(ctx);
-                return Http.NotFound(ctx);
+                return Responses.NotFound(ctx);
             }
             string slug = rest[seg[1]].ToString();
             if (n == 2)
@@ -57,7 +58,7 @@ public static class Router
                 if (get) return slug == "feed" ? Articles.Feed(ctx) : Articles.Get(ctx, slug);
                 if (put) return Articles.Update(ctx, slug);
                 if (delete) return Articles.Delete(ctx, slug);
-                return Http.NotFound(ctx);
+                return Responses.NotFound(ctx);
             }
             ReadOnlySpan<char> s2 = rest[seg[2]];
             if (n == 3 && s2.SequenceEqual("comments"))
@@ -72,7 +73,7 @@ public static class Router
             }
             else if (n == 4 && s2.SequenceEqual("comments") && delete)
                 return Comments.Delete(ctx, slug, rest[seg[3]].ToString());
-            return Http.NotFound(ctx);
+            return Responses.NotFound(ctx);
         }
         if (s0.SequenceEqual("tags") && n == 1 && get) return Tags.List(ctx);
         if (s0.SequenceEqual("user") && n == 1)
@@ -94,30 +95,6 @@ public static class Router
             if (n == 1) return Users.Register(ctx);
             if (n == 2 && rest[seg[1]].SequenceEqual("login")) return Users.Login(ctx);
         }
-        return Http.NotFound(ctx);
-    }
-}
-
-public static class Auth
-{
-    /// <summary>The viewer's user id; 0 when no Authorization header was sent; -1 when one was sent but isn't a valid token.</summary>
-    public static long Viewer(HttpContext ctx)
-    {
-        string? value = Header(ctx);
-        if (string.IsNullOrEmpty(value)) return 0;
-        if (!value.StartsWith(Scheme, StringComparison.Ordinal)) return -1;
-        long id = Jwt.Verify(value.AsSpan(Scheme.Length));
-        return id > 0 ? id : -1;
-    }
-
-    /// <summary>The token the request presented (call after Viewer accepted it).</summary>
-    public static string Token(HttpContext ctx) => Header(ctx)![Scheme.Length..];
-
-    const string Scheme = "Token ";
-
-    static string? Header(HttpContext ctx)
-    {
-        StringValues h = ctx.Request.Headers.Authorization;
-        return h.Count > 0 ? h[0] : null;
+        return Responses.NotFound(ctx);
     }
 }

@@ -1,6 +1,6 @@
 // The Blowfish initial state: the fractional hex digits of pi (P-array, then the four S-boxes).
 // Copied from golang.org/x/crypto/blowfish/const.go (v0.58.0).
-namespace Conduit;
+namespace Conduit.Security;
 
 static class BlowfishConstants
 {

@@ -1,12 +1,13 @@
 using System;
 using System.Linq;
 using System.Text;
+using Conduit.Security;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
 using Xunit;
 
-namespace Conduit.Tests;
+namespace Conduit.Tests.Security;
 
 public class BcryptTests
 {

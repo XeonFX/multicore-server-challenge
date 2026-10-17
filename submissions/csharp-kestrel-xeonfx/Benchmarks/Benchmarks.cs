@@ -1,5 +1,7 @@
 using System;
 using BenchmarkDotNet.Attributes;
+using Conduit.Http;
+using Conduit.Security;
 using Microsoft.AspNetCore.Http;
 
 namespace Conduit.Benchmarks;
@@ -94,8 +96,8 @@ public class JsonBenchmarks
         w.WriteString(Names.Title, "How to train your dragon");
         w.WriteString(Names.Description, "Ever wonder how?");
         w.WriteString(Names.Body, "It takes a Jacobian, and a lot of patience. Then some more patience.");
-        Http.WriteTimestamp(w, Names.CreatedAt, When);
-        Http.WriteTimestamp(w, Names.UpdatedAt, When);
+        JsonFields.WriteTimestamp(w, Names.CreatedAt, When);
+        JsonFields.WriteTimestamp(w, Names.UpdatedAt, When);
         w.WriteStartArray(Names.TagList);
         w.WriteStringValue("dragons");
         w.WriteStringValue("training");
@@ -104,14 +106,14 @@ public class JsonBenchmarks
         w.WriteBoolean(Names.Favorited, false);
         w.WriteStartObject(Names.Author);
         w.WriteString(Names.Username, "jake");
-        Http.WriteNullableString(w, Names.Bio, "I work at statefarm");
-        Http.WriteNullableString(w, Names.Image, null);
+        JsonFields.WriteNullableString(w, Names.Bio, "I work at statefarm");
+        JsonFields.WriteNullableString(w, Names.Image, null);
         w.WriteBoolean(Names.Following, false);
         w.WriteEndObject();
         w.WriteEndObject();
         w.WriteEndObject();
         int n = j.Written.Length;
-        j.Return();
+        j.Dispose();
         return n;
     }
 
@@ -120,8 +122,8 @@ public class JsonBenchmarks
     {
         var j = JsonOut.Rent();
         j.W.WriteStartObject();
-        Http.WriteTimestamp(j.W, Names.CreatedAt, When);
+        JsonFields.WriteTimestamp(j.W, Names.CreatedAt, When);
         j.W.WriteEndObject();
-        j.Return();
+        j.Dispose();
     }
 }

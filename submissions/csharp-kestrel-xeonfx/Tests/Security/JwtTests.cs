@@ -1,12 +1,13 @@
 using System;
 using System.Security.Cryptography;
 using System.Text;
+using Conduit.Security;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
 using Xunit;
 
-namespace Conduit.Tests;
+namespace Conduit.Tests.Security;
 
 public class JwtTests
 {
@@ -54,6 +55,8 @@ public class JwtTests
     {
         // Another header field order and extra claims are fine.
         Assert.Equal(7, Jwt.Verify(Sign("""{"typ":"JWT","alg":"HS256","kid":"k1"}""", Claims("\"7\"", Now + 60) )));
+        Assert.Equal(7, Jwt.Verify(Sign("""{"alg":"HS256"}""", Claims("\"7\"", Now + 60))));
+        Assert.Equal(7, Jwt.Verify(Sign("""{ "alg": "HS256", "typ": "JWT" }""", Claims("\"7\"", Now + 60))));
         Assert.Equal(7, Jwt.Verify(Sign(Hs256, """{"exp":""" + (Now + 60) + ""","sub":"7","roles":["a",{"b":1}],"x":null}""")));
         Assert.Equal(7, Jwt.Verify(Sign(Hs256, Claims("\"7\"", Now + 60, Now - 5))));
     }

@@ -2,7 +2,7 @@
 using System;
 using System.Runtime.CompilerServices;
 
-namespace Conduit;
+namespace Conduit.Security;
 
 public static unsafe partial class Bcrypt
 {
