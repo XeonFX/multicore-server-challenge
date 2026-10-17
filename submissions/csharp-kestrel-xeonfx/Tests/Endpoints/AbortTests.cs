@@ -17,7 +17,7 @@ namespace Conduit.Tests.Endpoints;
 
 /// <summary>
 /// A request whose client has gone by the time it is handled sends nothing to Postgres and reads no body, while
-/// requests on the same multiplexed data source go on. The tags table is locked by another transaction, so a
+/// the other requests on the same reader go on. The tags table is locked by another transaction, so a
 /// statement that did reach Postgres shows up waiting in pg_stat_activity.
 /// </summary>
 [Collection(ServerState.Collection)]

@@ -23,8 +23,8 @@ bash build.sh            # -> bin/conduit.dll
 DATABASE_URL=postgres://conduit:conduit@127.0.0.1:5432/conduit JWT_SECRET=dev-secret PORT=3000 bash start.sh
 ```
 
-Environment: `DATABASE_URL`, `JWT_SECRET` (required), `HOST` (127.0.0.1), `PORT` (3000), `DB_POOL_SIZE`
-(2 per core), `DB_MULTIPLEXING` (1), `DB_WRITERS` (2), `BCRYPT_THREADS` (one per two cores, at least 1), `BCRYPT_NICE` (0),
+Environment: `DATABASE_URL`, `JWT_SECRET` (required), `HOST` (127.0.0.1), `PORT` (3000), `DB_POOL_SIZE` (read
+loops, each with a connection; 2 per core), `DB_WRITERS` (2), `BCRYPT_THREADS` (one per two cores, at least 1), `BCRYPT_NICE` (0),
 `BCRYPT_BATCH_MS` (200), `STATS_SECONDS` (10; 0 turns the stats line off), `DOTNET_GCgen0size` (64 MB, set in
 `start.sh`).
 
@@ -104,9 +104,15 @@ Every response is byte-identical to the reference (the conformance transcript); 
 
 ### Connections
 
-- **Multiplexing.** Npgsql pipelines commands from concurrent requests onto few connections, so Postgres runs
-  a few busy backends instead of many mostly idle ones. On 1 CPU at 800 users: 17% more requests per second
-  and 15% less CPU per request than one connection per request (median of 3 rounds each).
+- **Read groups.** Every read goes to a queue. Read loops (two per core), each on its own connection, send what
+  has queued (up to 32 reads) as one `NpgsqlBatch` with one Sync. Postgres then starts and ends one implicit
+  transaction and flushes its replies once for the group, instead of once per statement as with Npgsql's
+  multiplexing; Read Committed still takes a fresh snapshot for every statement. On a quiet 2-vCPU x86 VPS the Sync
+  per statement cost 31 of a read's 180 µs of Postgres CPU. A read completes as soon as its rows are read; a failing
+  statement fails only its own read, and the reads after it (which Postgres skipped) run again as the next group.
+  Against multiplexing on that VPS at saturation (median of 4 and 3 rounds): 2,766 vs 2,600 requests per second,
+  p95 154 vs 201 ms, p99 179 vs 257 ms, CPU per request 0.359 vs 0.383 ms; at three quarters of the load, the same.
+  As with multiplexing, Postgres runs a few busy backends instead of one per request.
 - **Group commit.** Every write goes to a queue. Two writer loops, each on its own connection, send what has
   queued (up to 128 writes) as one `NpgsqlBatch`: one round trip and one transaction, so one WAL flush commits
   all of them. Each write's response is built from its row inside the batch and sent only after the commit
@@ -119,12 +125,13 @@ Every response is byte-identical to the reference (the conformance transcript); 
   unknown, and the loop reconnects. A write waits at most 2 s (`lock_timeout`) for a row lock someone else holds:
   then it alone fails (503), instead of holding its whole group for the 30 s statement timeout. At most 4,096
   writes wait for a loop; more are refused at once (503 with `Retry-After`), so a stalled database can't pile up
-  requests and their bodies. Under the workload the writes in flight stay in the tens. On 4 CPUs at 12,000 users: 19,100 to 22,500 requests per second, app CPU
-  per request 0.073 to 0.053 ms, Postgres 0.134 to 0.124 ms.
+  requests and their bodies. Under the workload the writes in flight stay in the tens. On 4 CPUs at 12,000 users:
+  19,100 to 22,500 requests per second, app CPU per request 0.073 to 0.053 ms, Postgres 0.134 to 0.124 ms.
 - **No reset on close, no enlistment, no TLS** on the loopback connection.
-- **A request whose client has gone sends nothing.** Reads and body parses take the request's abort token. Npgsql
-  stops honouring it once a multiplexed command is queued (it can't cancel one statement of a shared
-  connection), so a read already sent still runs to its end.
+- **A request whose client has gone sends nothing.** Body parses take the request's abort token, and a queued read
+  whose client has gone is dropped before a loop sends it. A read already sent runs to its end: cancelling it would
+  take a Postgres cancel request, which would hit whatever statement of the group is running. At most 65,536 reads
+  wait (near the knee every user can have one in flight); more are refused at once (503).
 
 ### bcrypt
 
@@ -180,14 +187,11 @@ throwing.
   pool keeps at most 32 MB of buffers, so a burst doesn't pin its peak for good.
 - **Text columns go out as UTF-8.** A text column's bytes are copied from the row (`GetBytes`, a buffer kept per
   thread) and written as they are, escaped where JSON needs it: no string per column and no UTF-16 round trip.
-- **Pooled read commands.** Each read statement has a pool of commands that keep their typed parameters and, with
-  multiplexing, a connection of their own that stays open (it holds no Postgres connection while idle). A read
-  sets values and runs: no command, connection or parameter objects. Npgsql's SQL rewriting is off
-  (`Npgsql.EnableSqlRewriting=false`): every statement uses `$n` and none holds a `;`, so nothing needs parsing.
-- Together these cut the bytes allocated per request (our code and Npgsql, measured in process on the full seed)
-  from about 5.9 KB to 1.3 KB on the request mix: a global list page from 9.8 KB to 1.2 KB, an article from 5.7 KB
-  to 1.2 KB. Gen0 collections came half as often; throughput and latency on a 2-vCPU x86 VPS stayed within the
-  runs' spread (about 5%).
+- Npgsql's SQL rewriting is off (`Npgsql.EnableSqlRewriting=false`): every statement uses `$n` and none holds a
+  `;`, so nothing needs parsing.
+- Writing text as UTF-8 cut the bytes allocated per request (our code and Npgsql, measured in process on the full
+  seed) from about 5.9 KB to 3 KB on the request mix; a global list page went from 9.8 KB to 3.5 KB. Gen0
+  collections came half as often; throughput and latency on a 2-vCPU x86 VPS stayed within the runs' spread.
 - JWT verification allocates nothing: it checks the token's alphabet, decodes into stack buffers, signs with a
   keyed HMAC kept per thread, compares in constant time, and accepts only HS256 tokens with a numeric `sub`
   and an unexpired `exp`. A header equal to the one this server issues skips the header parse; any other is

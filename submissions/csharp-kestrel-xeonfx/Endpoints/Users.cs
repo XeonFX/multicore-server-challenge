@@ -71,16 +71,8 @@ public static class Users
         JsonOut? j = null;
         try
         {
-            string hash = Passwords.UnknownUserHash;
-            using (var read = Db.Reads.Login.Rent().Set(0, email))
-            {
-                await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
-                if (await r.ReadAsync())
-                {
-                    hash = r.GetString(5);
-                    j = User(r, 1, Jwt.Issue(r.GetInt64(0)));
-                }
-            }
+            string hash;
+            (hash, j) = await Db.Reader.Run(Db.Command(Sql.Login, Db.P(email)), ReadLogin, ctx.RequestAborted);
             if (!await Passwords.VerifyAsync(password, hash, ctx.RequestAborted) || j is null) { await Responses.Error(ctx, 401, "invalid email or password"); return; }
             var ok = j;
             j = null;
@@ -92,15 +84,20 @@ public static class Users
         }
     }
 
+    /// <summary>The stored hash and the response for its user; an unknown email checks against a hash of nothing.</summary>
+    static readonly Func<NpgsqlDataReader, ValueTask<(string Hash, JsonOut? User)>> ReadLogin = static async r =>
+        await r.ReadAsync() ? (r.GetString(5), User(r, 1, Jwt.Issue(r.GetInt64(0)))) : (Passwords.UnknownUserHash, null);
+
     // GET /api/user
     public static async Task Current(HttpContext ctx)
     {
         long viewer = Auth.Viewer(ctx);
         if (viewer <= 0) { await Responses.Unauthorized(ctx); return; }
-        using var read = Db.Reads.CurrentUser.Rent().Set(0, viewer);
-        await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
-        if (!await r.ReadAsync()) { await Responses.Unauthorized(ctx); return; }
-        await Responses.Send(ctx, 200, User(r, 0, Auth.Token(ctx)));
+        // the handler runs on a reader loop while this request waits, so it may read the request's header
+        var j = await Db.Reader.Run(Db.Command(Sql.CurrentUser, Db.P(viewer)),
+            async r => await r.ReadAsync() ? User(r, 0, Auth.Token(ctx)) : null, ctx.RequestAborted);
+        if (j is null) await Responses.Unauthorized(ctx);
+        else await Responses.Send(ctx, 200, j);
     }
 
     // PUT /api/user

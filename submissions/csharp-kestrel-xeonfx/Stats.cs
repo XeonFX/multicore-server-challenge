@@ -13,6 +13,8 @@ public static class Stats
 {
     // writer
     public static long WriteGroups, WritesGrouped, WriteGroupMax, CommitTicks, CommitTicksMax, WriteWaitTicksMax, WriteRetries, WritesRefused;
+    // reader
+    public static long ReadGroups, ReadsGrouped, ReadGroupMax, ReadReruns, ReadsRefused;
     // bcrypt
     public static long BcryptBatches, BcryptJobs, BcryptWaitTicksMax, BcryptSkipped, BcryptRefused;
 
@@ -24,7 +26,7 @@ public static class Stats
 
     /// <summary>Prints a line every <paramref name="interval"/> on stdout until the process exits; the queues' depths
     /// come from <paramref name="writesQueued"/> and <paramref name="bcryptQueued"/>.</summary>
-    public static void Start(TimeSpan interval, Func<int> writesQueued, Func<int> bcryptQueued)
+    public static void Start(TimeSpan interval, Func<int> readsQueued, Func<int> writesQueued, Func<int> bcryptQueued)
     {
         if (interval <= TimeSpan.Zero) return;
         _ = Task.Run(async () =>
@@ -34,16 +36,17 @@ public static class Stats
             while (await timer.WaitForNextTickAsync())
             {
                 var now = Snapshot.Take();
-                Console.Out.WriteLine(Line(last, now, writesQueued(), bcryptQueued()));
+                Console.Out.WriteLine(Line(last, now, readsQueued(), writesQueued(), bcryptQueued()));
                 last = now;
             }
         });
     }
 
-    readonly record struct Snapshot(long At, long Groups, long Grouped, long Commit, long Reruns, long WriteRefusals,
+    readonly record struct Snapshot(long At, long Reads, long ReadJobs, long ReadRerunCount, long ReadRefusals, long Groups, long Grouped, long Commit, long Reruns, long WriteRefusals,
         long Batches, long Jobs, long Skipped, long BcryptRefusals, int Gen0, int Gen1, int Gen2, TimeSpan Pause, long Allocated, TimeSpan Cpu)
     {
         public static Snapshot Take() => new(Stopwatch.GetTimestamp(),
+            Interlocked.Read(ref ReadGroups), Interlocked.Read(ref ReadsGrouped), Interlocked.Read(ref ReadReruns), Interlocked.Read(ref ReadsRefused),
             Interlocked.Read(ref WriteGroups), Interlocked.Read(ref WritesGrouped), Interlocked.Read(ref CommitTicks),
             Interlocked.Read(ref WriteRetries), Interlocked.Read(ref WritesRefused),
             Interlocked.Read(ref BcryptBatches), Interlocked.Read(ref BcryptJobs), Interlocked.Read(ref BcryptSkipped),
@@ -54,12 +57,14 @@ public static class Stats
 
     static double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
 
-    static string Line(Snapshot a, Snapshot b, int writesQueued, int bcryptQueued)
+    static string Line(Snapshot a, Snapshot b, int readsQueued, int writesQueued, int bcryptQueued)
     {
         double seconds = (b.At - a.At) / (double)Stopwatch.Frequency;
-        long groups = b.Groups - a.Groups, batches = b.Batches - a.Batches;
+        long readGroups = b.Reads - a.Reads, groups = b.Groups - a.Groups, batches = b.Batches - a.Batches;
         return
-            $"stats {seconds:0}s: writes queued {writesQueued}, max wait {Ms(Interlocked.Exchange(ref WriteWaitTicksMax, 0)):0} ms, " +
+            $"stats {seconds:0}s: reads queued {readsQueued}, groups {readGroups} (avg {(readGroups > 0 ? (b.ReadJobs - a.ReadJobs) / (double)readGroups : 0):0.0}, " +
+            $"max {Interlocked.Exchange(ref ReadGroupMax, 0)}), reruns {b.ReadRerunCount - a.ReadRerunCount}, refused {b.ReadRefusals - a.ReadRefusals}; " +
+            $"writes queued {writesQueued}, max wait {Ms(Interlocked.Exchange(ref WriteWaitTicksMax, 0)):0} ms, " +
             $"groups {groups} (avg {(groups > 0 ? (b.Grouped - a.Grouped) / (double)groups : 0):0.0}, max {Interlocked.Exchange(ref WriteGroupMax, 0)}), " +
             $"commit avg {(groups > 0 ? Ms(b.Commit - a.Commit) / groups : 0):0.0} ms max {Ms(Interlocked.Exchange(ref CommitTicksMax, 0)):0} ms, " +
             $"reruns {b.Reruns - a.Reruns}, refused {b.WriteRefusals - a.WriteRefusals}; " +

@@ -35,9 +35,15 @@ public static class Comments
     {
         long viewer = Auth.Viewer(ctx);
         if (viewer < 0) { await Responses.Unauthorized(ctx); return; }
-        using var read = Db.Reads.Comments.Rent().Set(0, viewer).Set(1, slug);
-        await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
-        if (!await r.ReadAsync()) { await Responses.Error(ctx, 404, "article not found"); return; }
+        var j = await Db.Reader.Run(Db.Command(Sql.Comments, Db.P(viewer), Db.P(slug)), ReadList, ctx.RequestAborted);
+        if (j is null) await Responses.Error(ctx, 404, "article not found");
+        else await Responses.Send(ctx, 200, j);
+    }
+
+    /// <summary>{"comments": [...]}, or null when the article doesn't exist (no row).</summary>
+    static readonly Func<NpgsqlDataReader, ValueTask<JsonOut?>> ReadList = static async r =>
+    {
+        if (!await r.ReadAsync()) return null;
         var j = JsonOut.Rent();
         var w = j.W;
         try
@@ -49,14 +55,14 @@ public static class Comments
                 while (await r.ReadAsync());
             w.WriteEndArray();
             w.WriteEndObject();
+            return j;
         }
         catch
         {
             j.Dispose(); // the response is the error, not this buffer
             throw;
         }
-        await Responses.Send(ctx, 200, j);
-    }
+    };
 
     // POST /api/articles/{slug}/comments
     public static async Task Create(HttpContext ctx, string slug)

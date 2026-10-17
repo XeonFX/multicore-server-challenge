@@ -246,9 +246,12 @@ public sealed class ListTests : IClassFixture<ListTests.Data>
         a.Dispose();
         b.Dispose();
         long pooled = JsonOut.PooledBytes;
-        var source = Db.Source;
+        var reader = Db.Reader;
         // no tables on this search path: every statement fails
-        Db.Source = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONDUIT_TEST_DB")) { SearchPath = "pg_catalog" }.ConnectionString);
+        var failing = new Reader(NpgsqlDataSource.Create(
+            new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CONDUIT_TEST_DB")) { SearchPath = "pg_catalog", Multiplexing = false }.ConnectionString));
+        failing.Start(1);
+        Db.Reader = failing;
         try
         {
             var ctx = new DefaultHttpContext();
@@ -264,8 +267,8 @@ public sealed class ListTests : IClassFixture<ListTests.Data>
         }
         finally
         {
-            await Db.Source.DisposeAsync();
-            Db.Source = source;
+            Db.Reader = reader;
+            failing.Complete();
         }
     }
 }

@@ -10,8 +10,8 @@ namespace Conduit.Tests.Endpoints;
 
 /// <summary>
 /// The repository's schema.sql in a Postgres schema of its own, in the database CONDUIT_TEST_DB names (a user that
-/// may create schemas), with Db's read source and writer set up on it as Program does: multiplexed reads and the
-/// <see cref="Db.Plan"/> settings. A subclass adds its rows in <see cref="Seed"/>. Without CONDUIT_TEST_DB nothing
+/// may create schemas), with Db's reader and writer set up on it as Program does, with the <see cref="Db.Plan"/>
+/// settings. A subclass adds its rows in <see cref="Seed"/>. Without CONDUIT_TEST_DB nothing
 /// is created and the tests skip (<see cref="Require"/>). The schema is dropped on dispose.
 /// </summary>
 public abstract class TestSchema : IAsyncLifetime
@@ -34,7 +34,7 @@ public abstract class TestSchema : IAsyncLifetime
         _admin = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(ConnectionString) { SearchPath = Name }.ConnectionString);
         await Exec($"CREATE SCHEMA {Name}; SET search_path = {Name}; {await File.ReadAllTextAsync(SchemaFile())}");
         await Seed();
-        Db.Init(new NpgsqlConnectionStringBuilder(ConnectionString) { SearchPath = Name }, poolSize: 4, multiplexing: true, writers: 1);
+        Db.Init(new NpgsqlConnectionStringBuilder(ConnectionString) { SearchPath = Name }, readers: 4, writers: 1);
         Jwt.Init(Secret);
     }
 
@@ -74,7 +74,7 @@ public abstract class TestSchema : IAsyncLifetime
     {
         if (_admin is null) return;
         Db.Writer.Complete();
-        await Db.Source.DisposeAsync();
+        Db.Reader.Complete();
         await Exec($"DROP SCHEMA {Name} CASCADE");
         await _admin.DisposeAsync();
     }

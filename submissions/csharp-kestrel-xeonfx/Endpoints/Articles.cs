@@ -34,6 +34,9 @@ public static class Articles
         w.WriteEndObject();
     }
 
+    /// <summary>{"article": ...} from the first row, or null when there is none.</summary>
+    static readonly Func<NpgsqlDataReader, ValueTask<JsonOut?>> ReadSingle = static async r => await r.ReadAsync() ? Single(r, 0) : null;
+
     /// <summary>{"article": ...} from the reader's current row.</summary>
     static JsonOut Single(NpgsqlDataReader r, int c)
     {
@@ -72,15 +75,18 @@ public static class Articles
     /// <summary>The page and its capped count in one statement.</summary>
     static async Task Page(HttpContext ctx, ListKind kind, long viewer, long limit, long offset, string? filter)
     {
-        JsonOut? j = null;
+        var cmd = Db.Command(Sql.List[(int)kind], Db.P(viewer), Db.P(limit), Db.P(offset));
+        // feed: per followee, the newest limit + offset articles are enough
+        if (kind == ListKind.Feed) cmd.Parameters.Add(Db.P(offset > long.MaxValue - limit ? long.MaxValue : offset + limit));
+        else if (filter is not null) cmd.Parameters.Add(Db.P(filter));
+        await Responses.Send(ctx, 200, await Db.Reader.Run(cmd, ReadPage, ctx.RequestAborted));
+    }
+
+    static readonly Func<NpgsqlDataReader, ValueTask<JsonOut>> ReadPage = static async r =>
+    {
+        var j = JsonOut.Rent();
         try
         {
-            using var read = Db.Reads.List[(int)kind].Rent().Set(0, viewer).Set(1, limit).Set(2, offset);
-            // feed: per followee, the newest limit + offset articles are enough
-            if (kind == ListKind.Feed) read.Set(3, offset > long.MaxValue - limit ? long.MaxValue : offset + limit);
-            else if (filter is not null) read.Set(3, filter);
-            await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
-            j = JsonOut.Rent();
             var w = j.W;
             long n = 0;
             w.WriteStartObject();
@@ -93,28 +99,23 @@ public static class Articles
             w.WriteEndArray();
             w.WriteNumber(Names.ArticlesCount, n);
             w.WriteEndObject();
+            return j;
         }
         catch
         {
-            j?.Dispose(); // the response is the error, not this buffer
+            j.Dispose(); // the response is the error, not this buffer
             throw;
         }
-        await Responses.Send(ctx, 200, j);
-    }
+    };
 
     // GET /api/articles/{slug}
     public static async Task Get(HttpContext ctx, string slug)
     {
         long viewer = Auth.Viewer(ctx);
         if (viewer < 0) { await Responses.Unauthorized(ctx); return; }
-        JsonOut j;
-        using (var read = Db.Reads.ArticleBySlug.Rent().Set(0, viewer).Set(1, slug))
-        {
-            await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
-            if (!await r.ReadAsync()) { await Responses.Error(ctx, 404, "article not found"); return; }
-            j = Single(r, 0);
-        }
-        await Responses.Send(ctx, 200, j);
+        var j = await Db.Reader.Run(Db.Command(ArticleBySlug, Db.P(viewer), Db.P(slug)), ReadSingle, ctx.RequestAborted);
+        if (j is null) await Responses.Error(ctx, 404, "article not found");
+        else await Responses.Send(ctx, 200, j);
     }
 
     // POST /api/articles

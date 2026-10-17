@@ -28,15 +28,12 @@ public static class Profiles
     {
         long viewer = Auth.Viewer(ctx);
         if (viewer < 0) { await Responses.Unauthorized(ctx); return; }
-        JsonOut j;
-        using (var read = Db.Reads.Profile.Rent().Set(0, viewer).Set(1, username))
-        {
-            await using var r = await read.Command.ExecuteReaderAsync(ctx.RequestAborted);
-            if (!await r.ReadAsync()) { await Responses.Error(ctx, 404, "profile not found"); return; }
-            j = Profile(r, r.GetBoolean(3));
-        }
-        await Responses.Send(ctx, 200, j);
+        var j = await Db.Reader.Run(Db.Command(Sql.Profile, Db.P(viewer), Db.P(username)), Read, ctx.RequestAborted);
+        if (j is null) await Responses.Error(ctx, 404, "profile not found");
+        else await Responses.Send(ctx, 200, j);
     }
+
+    static readonly Func<NpgsqlDataReader, ValueTask<JsonOut?>> Read = static async r => await r.ReadAsync() ? Profile(r, r.GetBoolean(3)) : null;
 
     static readonly Func<NpgsqlDataReader?, JsonOut?> Followed = r => r is null ? null : Profile(r, true);
     static readonly Func<NpgsqlDataReader?, JsonOut?> Unfollowed = r => r is null ? null : Profile(r, false);

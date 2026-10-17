@@ -6,26 +6,13 @@ namespace Conduit.Data;
 
 public static class Db
 {
-    /// <summary>The reads' data source; setting it gives the read statements new command pools on it.</summary>
-    public static NpgsqlDataSource Source
-    {
-        get => _source;
-        set
-        {
-            _source = value;
-            Reads = new Reads(value);
-        }
-    }
-
-    static NpgsqlDataSource _source = null!;
-
-    /// <summary>The read statements, with pooled commands on <see cref="Source"/>.</summary>
-    public static Reads Reads { get; private set; } = null!;
-
     /// <summary>Every statement that writes goes through here, grouped into shared commits.</summary>
     public static Writer Writer = null!;
 
-    public static void Init(string databaseUrl, int poolSize, bool multiplexing, int writers)
+    /// <summary>Every statement that only reads goes through here, grouped into batches with one Sync.</summary>
+    public static Reader Reader = null!;
+
+    public static void Init(string databaseUrl, int readers, int writers)
     {
         var uri = new Uri(databaseUrl);
         string[] userInfo = uri.UserInfo.Split(':', 2);
@@ -37,23 +24,23 @@ public static class Db
             Username = Uri.UnescapeDataString(userInfo[0]),
             Password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : null,
             SslMode = SslMode.Disable,
-        }, poolSize, multiplexing, writers);
+        }, readers, writers);
     }
 
-    /// <summary>The data sources and the writer on <paramref name="csb"/>'s database (the tests pass theirs).</summary>
-    public static void Init(NpgsqlConnectionStringBuilder csb, int poolSize, bool multiplexing, int writers)
+    /// <summary>
+    /// The reader and the writer on <paramref name="csb"/>'s database (the tests pass theirs): <paramref name="readers"/>
+    /// and <paramref name="writers"/> loops, each on a connection of its own. Requests never hold a connection, so
+    /// Postgres runs few busy backends, and the reads queued while a loop is busy go out together.
+    /// </summary>
+    public static void Init(NpgsqlConnectionStringBuilder csb, int readers, int writers)
     {
-        // Many requests share each connection: commands from concurrent requests are pipelined onto a few
-        // connections instead of each request holding one, so Postgres runs few busy backends.
-        csb.Multiplexing = multiplexing;
-        csb.MaxPoolSize = poolSize;
+        csb.Multiplexing = false;
+        csb.MaxPoolSize = readers;
         csb.NoResetOnClose = true;
         csb.Enlist = false;
         Plan(csb);
-        Source = NpgsqlDataSource.Create(csb.ConnectionString);
-        // The first connection a multiplexed data source opens is a real one (it checks the server is there); after
-        // it, opening one does no I/O, which the pooled read commands rely on (see Read).
-        using (Source.OpenConnection()) { }
+        Reader = new Reader(NpgsqlDataSource.Create(csb.ConnectionString));
+        Reader.Start(readers);
         Writer = new Writer(WriterSource(csb, writers, WriterLockTimeout));
         Writer.Start(writers);
     }
@@ -66,8 +53,7 @@ public static class Db
     /// </summary>
     public static readonly TimeSpan WriterLockTimeout = TimeSpan.FromSeconds(2);
 
-    /// <summary>The writer loops' connections, from <paramref name="csb"/>'s settings: one per loop, not multiplexed (the
-    /// reads queued on a multiplexed one would wait for the commit's WAL flush), with a lock timeout.</summary>
+    /// <summary>The writer loops' connections, from <paramref name="csb"/>'s settings: one per loop, with a lock timeout.</summary>
     public static NpgsqlDataSource WriterSource(NpgsqlConnectionStringBuilder csb, int writers, TimeSpan lockTimeout)
     {
         var w = new NpgsqlConnectionStringBuilder(csb.ConnectionString) { Multiplexing = false, MaxPoolSize = writers };
