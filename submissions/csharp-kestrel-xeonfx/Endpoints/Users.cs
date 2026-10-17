@@ -93,12 +93,17 @@ public static class Users
     {
         long viewer = Auth.Viewer(ctx);
         if (viewer <= 0) { await Responses.Unauthorized(ctx); return; }
-        // the handler runs on a reader loop while this request waits, so it may read the request's header
-        var j = await Db.Reader.Run(Db.Command(Sql.CurrentUser, Db.P(viewer)),
-            async r => await r.ReadAsync() ? User(r, 0, Auth.Token(ctx)) : null, ctx.RequestAborted);
+        var j = await Db.Reader.Run(Db.Command(Sql.CurrentUser, Db.P(viewer)), ReadCurrent, ctx, ctx.RequestAborted);
         if (j is null) await Responses.Unauthorized(ctx);
         else await Responses.Send(ctx, 200, j);
     }
+
+    /// <summary>The user and the token the request presented. It runs on a reader loop while the request waits, so it
+    /// may read the request's header.</summary>
+    static readonly Func<NpgsqlDataReader, object?, ValueTask<JsonOut?>> ReadCurrent = static async (r, ctx) =>
+        await r.ReadAsync() ? User(r, 0, Auth.Token((HttpContext)ctx!)) : null;
+
+    static readonly Func<NpgsqlDataReader?, object?, JsonOut?> Updated = static (r, token) => r is null ? null : User(r, 0, (string)token!);
 
     // PUT /api/user
     public static async Task Update(HttpContext ctx)
@@ -127,7 +132,7 @@ public static class Users
             string token = Auth.Token(ctx).ToString();
             j = await Db.Writer.Run(
                 Db.Command(Sql.UpdateUser, Db.P(viewer), Db.Text(email), Db.Text(username), Db.Text(hash), Db.Text(bio), Db.Text(image)),
-                r => r is null ? null : User(r, 0, token), ctx.RequestAborted);
+                Updated, token, ctx.RequestAborted);
         }
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
         {

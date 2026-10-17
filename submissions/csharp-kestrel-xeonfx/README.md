@@ -24,7 +24,7 @@ DATABASE_URL=postgres://conduit:conduit@127.0.0.1:5432/conduit JWT_SECRET=dev-se
 ```
 
 Environment: `DATABASE_URL`, `JWT_SECRET` (required), `HOST` (127.0.0.1), `PORT` (3000), `DB_POOL_SIZE` (read
-loops, each with a connection; 2 per core), `DB_WRITERS` (2), `BCRYPT_THREADS` (one per two cores, at least 1), `BCRYPT_NICE` (0),
+loops, each with a connection; 2 per core), `DB_WRITERS` (2), `BCRYPT_THREADS` (one per two cores, at least 1),
 `BCRYPT_BATCH_MS` (200), `STATS_SECONDS` (10; 0 turns the stats line off), `DOTNET_GCgen0size` (64 MB, set in
 `start.sh`).
 
@@ -35,16 +35,43 @@ loops, each with a connection; 2 per core), `DB_WRITERS` (2), `BCRYPT_THREADS` (
 | `Program.cs`, `Router.cs` | `Conduit` | settings from the environment, Kestrel, the route switch |
 | `Http/` | `Conduit.Http` | request bodies, query strings, pooled JSON responses |
 | `Endpoints/` | `Conduit.Endpoints` | the handlers: users, profiles, articles, comments, tags |
-| `Data/` | `Conduit.Data` | Npgsql data sources, the SQL, the group commit writer |
+| `Data/` | `Conduit.Data` | Npgsql data sources, the SQL, the read groups and the group commit writer |
 | `Security/` | `Conduit.Security` | JWT, the `Authorization` header, bcrypt and its threads |
 | `Tests/`, `Benchmarks/` | | their own projects; `Tests/` mirrors the folders above |
 
 ## Results
 
-The most users each server held while staying under the bar (p95 < 500 ms, p99 < 1 s, errors < 1%), stepping
-the user count up on the full seed. The server and Postgres ran together on N CPUs and the load generator on
-the others. Go and Rust are [`examples/go`](../../examples/go) and [`examples/rust`](../../examples/rust)
-unchanged, on the same Postgres 18 with the same config.
+On a box like the scoring one: the server and Postgres 18 on an 8-vCPU Google Cloud `c4-highcpu-8` (Xeon
+Platinum 8581C, 16 GB, `box/setup-box.sh` unchanged), the load generator on a separate 8-vCPU machine, the full
+seed, think-scale 1 (the workload's real 7 s). Each run copies a fresh database, restarts Postgres, warms up at
+500 users for 3 minutes, ramps for 60 s and measures 60 s. Pass is p95 < 500 ms, p99 < 1 s, errors < 1%.
+Memory is the box's peak.
+
+| Users | This version | b2a554c (first version of this PR) | Go example |
+|---|---|---|---|
+| 20,000 | | | pass: p95 3 ms, p99 10 ms, 54% CPU |
+| 30,000 | | | pass: p95 8 ms, p99 15 ms, 84% CPU |
+| 60,000 | pass: p95 23 ms, p99 89 ms, 73% CPU, 3.4 GB | | |
+| 80,000 | pass: p95 32 ms, p99 105 ms, 88% CPU, 3.9 GB | pass: p95 59 ms, p99 149 ms, 96% CPU, 4.2 GB | |
+| 100,000 | **pass: p95 273 ms, p99 313 ms**, 98% CPU, 4.1 GB, 25,280 req/s | fail: p95 1,198 ms, p99 1,880 ms, 5.4 GB | |
+
+No errors in any run. 100,000 users is the most this rig can drive: one load machine opens about 64k connections
+per target address, and the target has two. At 100,000 the box is at 98% CPU, 70 points of it Postgres, so the
+limit is CPU, not memory (4.1 of 16 GB). The Rust example didn't build on this rig (its toolchain wasn't installed
+for the build user), so it is only in the table below.
+
+What took 100,000 from fail to pass was the read groups (one Sync per batch of reads instead of Npgsql's
+multiplexing): measured against the same code with multiplexing, p95 at 80,000 went from 83 to 32 ms, and at
+100,000 from 763 ms (fail) to 273 ms. Before that, text columns written from their UTF-8 bytes halved the gen0
+collections, and turning Npgsql's SQL rewriting off saved parsing every parameterless statement.
+
+Tried and not kept, on the same rig: workstation GC (p95 130 ms at 80,000) and a 256 MB gen0 budget (p95 231 ms,
+p99 577 ms at 80,000); commands pooled per connection, which cut the bytes per read by 80% in the micro-benchmark
+but at 100,000 gave p95 376 ms, p99 466 ms and 4.9 GB.
+
+Earlier, on smaller boxes, the most users each server held with users thinking a tenth of the 7 s
+(`-think-scale 0.1`), so ranks only, not the scoring box's counts. Go and Rust are
+[`examples/go`](../../examples/go) and [`examples/rust`](../../examples/rust) unchanged, on the same Postgres.
 
 | CPUs | C# | Go | Rust | C# req/s at its limit |
 |---|---|---|---|---|
@@ -53,11 +80,8 @@ unchanged, on the same Postgres 18 with the same config.
 | 4 (arm64) | **13,000** | 5,000 | 5,000 | 20,730 |
 | 6 (arm64) | **12,000** | 6,000 | 6,000 | 22,460 |
 
-Users think for a tenth of the workload's 7 s (`-think-scale 0.1`), so these counts are not the scoring box's;
-they rank the servers under the same load. Every login and sign-up succeeded in every C# run up to its limit.
-The 1-CPU box is a 2-vCPU OVH VPS; 2 to 6 CPUs are a Mac mini M1 in a Linux VM. 8 CPUs needs a separate
-load generator machine, which I didn't have. On the mini, CPUs 5 and 6 are efficiency cores and the load
-generator had two cores left, so the 6-CPU row understates every server.
+The 1-CPU box is a 2-vCPU OVH VPS; 2 to 6 CPUs are a Mac mini M1 in a Linux VM, where CPUs 5 and 6 are efficiency
+cores and the load generator had two cores left, so the 6-CPU row understates every server.
 
 Where it comes from, at 3,500 users on 4 CPUs (CPU time per request):
 
@@ -108,8 +132,8 @@ Every response is byte-identical to the reference (the conformance transcript); 
   has queued (up to 32 reads) as one `NpgsqlBatch` with one Sync. Postgres then starts and ends one implicit
   transaction and flushes its replies once for the group, instead of once per statement as with Npgsql's
   multiplexing; Read Committed still takes a fresh snapshot for every statement. On a quiet 2-vCPU x86 VPS the Sync
-  per statement cost 31 of a read's 180 µs of Postgres CPU. A read completes as soon as its rows are read; a failing
-  statement fails only its own read, and the reads after it (which Postgres skipped) run again as the next group.
+  per statement cost 31 of a read's 180 µs of Postgres CPU. A read completes once its statement has ended (a
+  statement can still fail after the rows its read took); a failing statement fails only its own read, and the reads after it (which Postgres skipped) run again as the next group.
   Against multiplexing on that VPS at saturation (median of 4 and 3 rounds): 2,766 vs 2,600 requests per second,
   p95 154 vs 201 ms, p99 179 vs 257 ms, CPU per request 0.359 vs 0.383 ms; at three quarters of the load, the same.
   As with multiplexing, Postgres runs a few busy backends instead of one per request.
@@ -197,26 +221,44 @@ throwing.
   and an unexpired `exp`. A header equal to the one this server issues skips the header parse; any other is
   parsed and must say HS256. An `Authorization` header sent empty is a 401 like any other invalid one; only a
   request without the header is anonymous.
-- **A stats line** every `STATS_SECONDS` on stdout: writes queued and their longest wait, groups (average and
-  largest size), commit time, reruns, refusals; bcrypt queue, wait, lanes per batch, skipped jobs; GC counts and
-  pause time, allocation rate, heap size, process CPU, thread pool size and backlog. Only the writer loops and
-  bcrypt workers update its counters; the read path doesn't touch them.
+- **A stats line** every `STATS_SECONDS` on stdout: reads queued, read groups (average and largest size), reruns
+  and refusals; writes queued and their longest wait, groups (average and largest size), commit time, reruns,
+  refusals; bcrypt queue, wait, lanes per batch, skipped jobs; GC counts and pause time, allocation rate, heap
+  size, process CPU, thread pool size and backlog. The reader and writer loops and the bcrypt workers update its
+  counters once per group or batch, not per request.
 - **Not used: inline socket completions** (`DOTNET_SYSTEM_NET_SOCKETS_INLINE_COMPLETIONS=1`, continuations on
   the epoll thread). Under full load the CPU per request was the same, and the median login took 5.7 s instead
   of 1.7 s.
 
 ## Micro-benchmarks
 
-BenchmarkDotNet 0.15.8 (`Benchmarks/`), arm64 Linux:
+BenchmarkDotNet 0.15.8 (`Benchmarks/`, short job), on the 8-vCPU x86 target above:
 
 | Benchmark | Time | Allocated |
 |---|---|---|
-| JWT verify | 1.29 µs | 0 B |
-| JWT issue | 1.14 µs | 944 B |
-| Query `?limit=20&offset=40` | 111 ns | 168 B |
-| Query escaped filter | 75 ns | 80 B |
-| Article JSON | 482 ns | 0 B |
-| Timestamp | 61 ns | 0 B |
+| JWT verify | 1.23 µs | 0 B |
+| JWT issue | 1.01 µs | 944 B |
+| Query `?limit=20&offset=40` | 76 ns | 64 B |
+| Query escaped filter | 61 ns | 48 B |
+| Article JSON | 294 ns | 0 B |
+| Timestamp | 85 ns | 0 B |
+
+`DbBenchmarks` runs reads against the full seed (`BENCH_DB`), alternating an article by slug and the first page
+of the global list, four ways: one command per read on pooled connections, the same multiplexed, one batch with
+new commands (the read groups), and one batch reusing its commands. Bytes allocated per read, groups of 32,
+prepared statements:
+
+| | Text columns as strings | as UTF-8 bytes |
+|---|---|---|
+| One command per read | 11.0 KB | 2.9 KB |
+| Multiplexed | 10.0 KB | 1.8 KB |
+| Batch, new commands (the server) | 9.2 KB | 0.96 KB |
+| Batch, reused commands | 8.4 KB | 0.20 KB |
+
+Prepared statements make a single read 4 to 5 times faster (100 vs 514 µs one command per read, 89 vs 362 µs as
+a batch). Times compare only within one way of reading: one command per read spreads a group over 32 connections
+that run in parallel on an idle server, so its group finishes sooner, while under full load no core is idle and
+the CPU per read decides; that is what the load runs above measure.
 
 ## Tests
 

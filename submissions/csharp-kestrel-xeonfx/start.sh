@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the server in the foreground. Config: DATABASE_URL, JWT_SECRET, HOST, PORT
 # (optional: DB_POOL_SIZE, read loops (one connection each), default 2 per core;
-# BCRYPT_THREADS, default one per two cores, at least 1; BCRYPT_NICE, default 0;
+# BCRYPT_THREADS, default one per two cores, at least 1;
 # BCRYPT_BATCH_MS, how long a hash waits for others to share its run, default 200; DB_WRITERS, writer loops,
 # default 2; STATS_SECONDS, seconds between stats lines on stdout, default 10, 0 for none).
 set -euo pipefail

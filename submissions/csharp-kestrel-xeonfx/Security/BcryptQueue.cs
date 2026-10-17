@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -32,18 +31,15 @@ public sealed class BcryptQueue
     readonly BlockingCollection<Pending> _jobs;
     readonly Lock _collecting = new();
     readonly long _window;
-    readonly int _nice;
     long _batches;
 
     /// <summary>
-    /// Starts <paramref name="threads"/> workers. With <paramref name="nice"/> above 0 they run on Linux as
-    /// SCHED_BATCH at that nice, so when the CPUs are saturated logins wait instead of the other requests. Off by
-    /// default: at 12k users on 4 CPUs nice 5 kept every other request fast but timed out a third of the logins.
+    /// Starts <paramref name="threads"/> workers at normal priority. Lower priority (SCHED_BATCH, nice 5) kept every
+    /// other request fast at 12k users on 4 CPUs but timed out a third of the logins.
     /// </summary>
-    public BcryptQueue(int threads, TimeSpan window, int nice = 0)
+    public BcryptQueue(int threads, TimeSpan window)
     {
         _window = (long)(window.TotalSeconds * Stopwatch.Frequency);
-        _nice = nice;
         _jobs = new BlockingCollection<Pending>(MaxQueuedPerThread * threads);
         for (int i = 0; i < threads; i++)
             new Thread(Work) { IsBackground = true, Name = $"bcrypt-{i}" }.Start();
@@ -69,19 +65,8 @@ public sealed class BcryptQueue
         return p.Task;
     }
 
-    [DllImport("libc")] static extern int gettid();
-    [DllImport("libc")] static extern int setpriority(int which, int who, int prio);
-    [DllImport("libc")] static extern int sched_setscheduler(int pid, int policy, ref int param);
-
     void Work()
     {
-        if (_nice > 0 && OperatingSystem.IsLinux())
-        {
-            const int PrioProcess = 0, SchedBatch = 3;
-            int tid = gettid(), param = 0;
-            sched_setscheduler(tid, SchedBatch, ref param);
-            setpriority(PrioProcess, tid, _nice);
-        }
         var batch = new Pending[Bcrypt.MaxLanes];
         var jobs = new BcryptJob[Bcrypt.MaxLanes];
         while (true)

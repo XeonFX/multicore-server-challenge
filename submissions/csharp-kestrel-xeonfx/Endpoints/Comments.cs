@@ -75,19 +75,22 @@ public static class Comments
             await Responses.Unprocessable(ctx, "body is required");
             return;
         }
-        var j = await Db.Writer.Run(Db.Command(Sql.CreateComment, Db.P(viewer), Db.P(body), Db.P(slug)), r =>
-        {
-            if (r is null) return null;
-            var j = JsonOut.Rent();
-            j.W.WriteStartObject();
-            j.W.WritePropertyName(Names.Comment);
-            Write(j.W, r, body);
-            j.W.WriteEndObject();
-            return j;
-        }, ctx.RequestAborted);
+        var j = await Db.Writer.Run(Db.Command(Sql.CreateComment, Db.P(viewer), Db.P(body), Db.P(slug)), Created, body, ctx.RequestAborted);
         if (j is null) await Responses.Error(ctx, 404, "article not found");
         else await Responses.Send(ctx, 201, j);
     }
+
+    /// <summary>{"comment": ...} from the inserted row and the body that was sent, or null when the article doesn't exist.</summary>
+    static readonly Func<NpgsqlDataReader?, object?, JsonOut?> Created = static (r, body) =>
+    {
+        if (r is null) return null;
+        var j = JsonOut.Rent();
+        j.W.WriteStartObject();
+        j.W.WritePropertyName(Names.Comment);
+        Write(j.W, r, (string)body!);
+        j.W.WriteEndObject();
+        return j;
+    };
 
     // DELETE /api/articles/{slug}/comments/{id}
     public static async Task Delete(HttpContext ctx, string slug, string idText)

@@ -23,14 +23,13 @@ public static class Program
         int port = int.Parse(Env("PORT", "3000"));
         int cores = Environment.ProcessorCount;
         // Read loops, each with its own connection, each sending whatever reads queued while it was busy as one batch.
-        // Two per core: with multiplexing at 4 cores, 8 connections beat 4 and 16 by 8-10% CPU per request (more
-        // backends contend for the same cores; fewer leave reads queued behind each other).
+        // Two per core: at 4 cores 8 connections beat 4 and 16 by 8-10% CPU per request (more backends contend for
+        // the same cores; fewer leave reads queued behind each other).
         int readers = int.Parse(Env("DB_POOL_SIZE", (2 * cores).ToString()));
         // One per two cores. Under load jobs queue up and a worker runs up to four interleaved, so fewer threads
         // spend less CPU per hash; but when every core is busy each thread gets only its share of the CPU, and
         // logins grow with the cores: at 4 cores one thread let two thirds of the logins fail, two kept up.
         int bcryptThreads = int.Parse(Env("BCRYPT_THREADS", Math.Max(1, cores / 2).ToString()));
-        int bcryptNice = int.Parse(Env("BCRYPT_NICE", "0"));
         // How long the first login of a batch waits for others to share its interleaved run. Logins are about one
         // request in a thousand, so the wait never shows in the p95; at the workload's few logins a second it lets
         // most hashes share a run. 0, 80 and 200 ms were within noise at 12k users on 4 CPUs.
@@ -46,7 +45,7 @@ public static class Program
 
         Jwt.Init(secret);
         Db.Init(dbUrl, readers, writers);
-        Passwords.Init(bcryptThreads, bcryptWindow, bcryptNice);
+        Passwords.Init(bcryptThreads, bcryptWindow);
         // A line of queue, commit, bcrypt and GC counters on stdout every STATS_SECONDS (0: none).
         Stats.Start(TimeSpan.FromSeconds(int.Parse(Env("STATS_SECONDS", "10"))), () => Db.Reader.Queued, () => Db.Writer.Queued, () => Passwords.Queued);
 
@@ -69,7 +68,7 @@ public static class Program
 
         var app = builder.Build();
         app.Run(Router.Handle);
-        Console.WriteLine($"conduit (c#) listening on {host}:{port}, {readers} readers, {writers} writers, bcrypt threads {bcryptThreads} at nice {bcryptNice}, batch window {bcryptWindow.TotalMilliseconds} ms");
+        Console.WriteLine($"conduit (c#) listening on {host}:{port}, {readers} readers, {writers} writers, bcrypt threads {bcryptThreads}, batch window {bcryptWindow.TotalMilliseconds} ms");
         app.Run();
     }
 

@@ -50,9 +50,14 @@ public sealed class Writer
     /// even with no rows): a write without a result set would be handed the next write's row. If
     /// <paramref name="aborted"/> fires before a loop takes the write into a group, it is cancelled without running.
     /// </summary>
-    public Task<T> Run<T>(NpgsqlBatchCommand[] commands, Func<NpgsqlDataReader?, T> read, CancellationToken aborted = default)
+    public Task<T> Run<T>(NpgsqlBatchCommand[] commands, Func<NpgsqlDataReader?, T> read, CancellationToken aborted = default) =>
+        Run(commands, static (r, read) => ((Func<NpgsqlDataReader?, T>)read!)(r), read, aborted);
+
+    /// <summary>As <see cref="Run{T}(NpgsqlBatchCommand[], Func{NpgsqlDataReader?, T}, CancellationToken)"/>, with
+    /// <paramref name="state"/> handed to <paramref name="read"/>, so a static handler needs no closure.</summary>
+    public Task<T> Run<T>(NpgsqlBatchCommand[] commands, Func<NpgsqlDataReader?, object?, T> read, object? state, CancellationToken aborted)
     {
-        var job = new Job<T>(commands, read, aborted);
+        var job = new Job<T>(commands, read, state, aborted);
         if (Interlocked.Increment(ref _queued) > MaxQueued)
         {
             Interlocked.Decrement(ref _queued);
@@ -72,6 +77,9 @@ public sealed class Writer
 
     public Task<T> Run<T>(NpgsqlBatchCommand command, Func<NpgsqlDataReader?, T> read, CancellationToken aborted = default) =>
         Run([command], read, aborted);
+
+    public Task<T> Run<T>(NpgsqlBatchCommand command, Func<NpgsqlDataReader?, object?, T> read, object? state, CancellationToken aborted) =>
+        Run([command], read, state, aborted);
 
     async Task Loop()
     {
@@ -210,7 +218,8 @@ public sealed class Writer
         public abstract void Cancel();
     }
 
-    sealed class Job<T>(NpgsqlBatchCommand[] commands, Func<NpgsqlDataReader?, T> read, CancellationToken aborted) : Job(commands, aborted)
+    sealed class Job<T>(NpgsqlBatchCommand[] commands, Func<NpgsqlDataReader?, object?, T> read, object? state, CancellationToken aborted)
+        : Job(commands, aborted)
     {
         // Continuations run on the thread pool, not on the loop that commits the next group.
         public readonly TaskCompletionSource<T> Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -221,7 +230,7 @@ public sealed class Writer
         public override void Read(NpgsqlDataReader? row)
         {
             Discard(); // the attempt that read the last one rolled back
-            try { _result = read(row); _read = true; _error = null; }
+            try { _result = read(row, state); _read = true; _error = null; }
             catch (Exception e) { _error = e; } // a bug in one write's read fails that write, not the group
         }
 

@@ -20,7 +20,7 @@ public static class Passwords
     /// bcrypt as a wrong password: response times don't tell which emails have accounts.</summary>
     public static readonly string UnknownUserHash = Bcrypt.Hash(Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), Cost);
 
-    public static void Init(int threads, TimeSpan batchWindow = default, int nice = 0) => _queue = new BcryptQueue(threads, batchWindow, nice);
+    public static void Init(int threads, TimeSpan batchWindow = default) => _queue = new BcryptQueue(threads, batchWindow);
 
     /// <summary>Hashes waiting for a worker.</summary>
     public static int Queued => _queue.Queued;

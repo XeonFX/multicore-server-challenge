@@ -13,8 +13,8 @@ namespace Conduit.Data;
 /// as one <see cref="NpgsqlBatch"/>: one Sync for the group, so Postgres starts and ends one implicit transaction and
 /// flushes its replies once, instead of once per statement (31 of a statement's 180 µs of Postgres CPU went to that
 /// on a 2-vCPU x86 box). Read Committed takes a fresh snapshot for every statement, so each read sees what it would alone.
-/// A read completes as soon as its rows are read; a failing statement fails only its own read, and the reads after it,
-/// which Postgres skipped, run again as the next group.
+/// A read completes once its statement has ended; a failing statement fails only its own read, and the reads after it, which Postgres
+/// skipped, run again as the next group.
 /// </summary>
 public sealed class Reader
 {
@@ -52,9 +52,14 @@ public sealed class Reader
     /// row, and reads the rows it needs; the task completes with what it returns. If <paramref name="aborted"/> fires
     /// before a loop takes the read into a group, it is cancelled without running.
     /// </summary>
-    public Task<T> Run<T>(NpgsqlBatchCommand command, Func<NpgsqlDataReader, ValueTask<T>> read, CancellationToken aborted)
+    public Task<T> Run<T>(NpgsqlBatchCommand command, Func<NpgsqlDataReader, ValueTask<T>> read, CancellationToken aborted) =>
+        Run(command, static (r, read) => ((Func<NpgsqlDataReader, ValueTask<T>>)read!)(r), read, aborted);
+
+    /// <summary>As <see cref="Run{T}(NpgsqlBatchCommand, Func{NpgsqlDataReader, ValueTask{T}}, CancellationToken)"/>,
+    /// with <paramref name="state"/> handed to <paramref name="read"/>, so a static handler needs no closure.</summary>
+    public Task<T> Run<T>(NpgsqlBatchCommand command, Func<NpgsqlDataReader, object?, ValueTask<T>> read, object? state, CancellationToken aborted)
     {
-        var job = new Job<T>(command, read, aborted);
+        var job = new Job<T>(command, read, state, aborted);
         if (aborted.IsCancellationRequested) job.Cancel();
         else if (Interlocked.Increment(ref _queued) > MaxQueued)
         {
@@ -114,7 +119,10 @@ public sealed class Reader
         else group.Add(job);
     }
 
-    /// <summary>Runs the group's reads as one batch; a failing statement fails its read and the rest run again.</summary>
+    /// <summary>
+    /// Runs the group's reads as one batch; a failing statement fails its read and the rest run again. A read is
+    /// answered only once its statement has ended: a statement can fail after the rows its read took.
+    /// </summary>
     static async Task RunGroup(NpgsqlConnection conn, List<Job> group)
     {
         for (int from = 0; from < group.Count;)
@@ -129,6 +137,9 @@ public sealed class Reader
                 {
                     if (i > from) await r.NextResultAsync();
                     await group[i].Read(r);
+                    // the rows the read left, up to the statement's end: an error after them is still statement i's
+                    while (await r.ReadAsync()) { }
+                    group[i].Answer();
                 }
                 return;
             }
@@ -147,35 +158,52 @@ public sealed class Reader
         public readonly NpgsqlBatchCommand Command = command;
         public readonly CancellationToken Aborted = aborted;
 
-        /// <summary>Reads its result set and completes; a Postgres error is the statement's and goes to the group.</summary>
+        /// <summary>Reads its result set; a Postgres error is the statement's and goes to the group.</summary>
         public abstract ValueTask Read(NpgsqlDataReader r);
+        /// <summary>Completes with what <see cref="Read"/> returned, once the statement has ended without error.</summary>
+        public abstract void Answer();
         public abstract void Fail(Exception e);
         public abstract void Cancel();
     }
 
-    sealed class Job<T>(NpgsqlBatchCommand command, Func<NpgsqlDataReader, ValueTask<T>> read, CancellationToken aborted) : Job(command, aborted)
+    sealed class Job<T>(NpgsqlBatchCommand command, Func<NpgsqlDataReader, object?, ValueTask<T>> read, object? state, CancellationToken aborted)
+        : Job(command, aborted)
     {
         // Continuations run on the thread pool, not on the loop reading the next result set.
         readonly TaskCompletionSource<T> _done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        T _result = default!;
+        bool _read;
 
         public Task<T> Task => _done.Task;
 
         public override async ValueTask Read(NpgsqlDataReader r)
         {
-            T result;
             try
             {
-                result = await read(r);
+                _result = await read(r, state);
+                _read = true;
             }
             catch (Exception e) when (e is not PostgresException and not NpgsqlException)
             {
                 _done.TrySetException(e); // a bug in one read's handler fails that read, not the group
-                return;
             }
-            _done.TrySetResult(result);
         }
 
-        public override void Fail(Exception e) => _done.TrySetException(e);
+        public override void Answer()
+        {
+            if (_read) _done.TrySetResult(_result);
+            _result = default!;
+            _read = false;
+        }
+
+        public override void Fail(Exception e)
+        {
+            // a result read from a statement that then failed is not handed over: its pooled buffer goes back
+            if (_done.TrySetException(e) && _read && _result is IDisposable d) d.Dispose();
+            _result = default!;
+            _read = false;
+        }
         public override void Cancel() => _done.TrySetCanceled(Aborted);
     }
 }

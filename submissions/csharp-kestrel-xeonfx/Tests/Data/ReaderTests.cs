@@ -70,6 +70,24 @@ public sealed class ReaderTests : IAsyncDisposable
     }
 
     [Fact(Timeout = 30_000)]
+    public async Task AStatementFailingAfterTheRowItsReadTookFailsThatReadAndNoOther()
+    {
+        var reader = NewReader();
+        // rows 1 and 2 go out before row 3 divides by zero; the handler takes only the first row
+        const string FailsOnRow3 = "SELECT 10 / (3 - g) FROM generate_series(1, 5) g";
+        var failing = Read(reader, FailsOnRow3);
+        var next = Read(reader, "SELECT 7");
+        var last = Read(reader, FailsOnRow3); // the group's last statement: its error comes at the batch's end
+        reader.Start(1);
+
+        Assert.Equal(PostgresErrorCodes.DivisionByZero, (await Assert.ThrowsAsync<PostgresException>(() => failing)).SqlState);
+        Assert.Equal(7, await next);
+        Assert.Equal(PostgresErrorCodes.DivisionByZero, (await Assert.ThrowsAsync<PostgresException>(() => last)).SqlState);
+        long pid = await Read(reader, "SELECT pg_backend_pid()");
+        Assert.Equal(pid, await Read(reader, "SELECT pg_backend_pid()")); // the loop kept its connection
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task AReadWhoseClientLeftIsDroppedWithoutRunning()
     {
         var reader = NewReader();

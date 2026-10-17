@@ -6,8 +6,9 @@ using System.Threading.Tasks;
 namespace Conduit;
 
 /// <summary>
-/// Counters of the writer and the bcrypt queue, and the runtime's GC and thread pool, printed as one line per interval.
-/// Only the writer loops and bcrypt workers update them (a few thousand times a second at most), never the read path.
+/// Counters of the reader, the writer and the bcrypt queue, and the runtime's GC and thread pool, printed as one line
+/// per interval. Only the reader and writer loops and the bcrypt workers update them, once per group or batch (a few
+/// thousand times a second at most), never per request.
 /// </summary>
 public static class Stats
 {
