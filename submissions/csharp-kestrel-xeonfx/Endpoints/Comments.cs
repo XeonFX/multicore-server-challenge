@@ -21,7 +21,8 @@ public static class Comments
         w.WriteNumber(Names.Id, r.GetInt64(0));
         JsonFields.WriteTimestamp(w, Names.CreatedAt, r.GetFieldValue<DateTime>(1));
         JsonFields.WriteTimestamp(w, Names.UpdatedAt, r.GetFieldValue<DateTime>(2));
-        w.WriteString(Names.Body, created ?? r.GetString(3));
+        if (created is null) Rows.WriteText(w, Names.Body, r, 3);
+        else w.WriteString(Names.Body, created);
         w.WriteStartObject(Names.Author);
         Rows.WritePerson(w, r, created is null ? 4 : 3);
         w.WriteBoolean(Names.Following, created is null && r.GetBoolean(7));

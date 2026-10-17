@@ -84,7 +84,8 @@ public class JsonBenchmarks
 {
     static readonly DateTime When = new(2025, 4, 1, 12, 0, 0, 123, DateTimeKind.Utc);
 
-    /// <summary>One article's worth of output, as Articles.Write emits it (fields from locals, not a reader).</summary>
+    /// <summary>One article's worth of output, as Articles.Write emits it: text as UTF-8, as it comes from the row (here from
+    /// literals, not a reader).</summary>
     [Benchmark]
     public int Article()
     {
@@ -92,22 +93,20 @@ public class JsonBenchmarks
         var w = j.W;
         w.WriteStartObject();
         w.WriteStartObject(Names.Article);
-        w.WriteString(Names.Slug, "how-to-train-your-dragon-12345");
-        w.WriteString(Names.Title, "How to train your dragon");
-        w.WriteString(Names.Description, "Ever wonder how?");
-        w.WriteString(Names.Body, "It takes a Jacobian, and a lot of patience. Then some more patience.");
+        w.WriteString(Names.Slug, "how-to-train-your-dragon-12345"u8);
+        w.WriteString(Names.Title, "How to train your dragon"u8);
+        w.WriteString(Names.Description, "Ever wonder how?"u8);
+        w.WriteString(Names.Body, "It takes a Jacobian, and a lot of patience. Then some more patience."u8);
         JsonFields.WriteTimestamp(w, Names.CreatedAt, When);
         JsonFields.WriteTimestamp(w, Names.UpdatedAt, When);
-        w.WriteStartArray(Names.TagList);
-        w.WriteStringValue("dragons");
-        w.WriteStringValue("training");
-        w.WriteEndArray();
+        w.WritePropertyName(Names.TagList);
+        w.WriteRawValue("""["dragons","training"]"""u8, skipInputValidation: true);
         w.WriteNumber(Names.FavoritesCount, 42);
         w.WriteBoolean(Names.Favorited, false);
         w.WriteStartObject(Names.Author);
-        w.WriteString(Names.Username, "jake");
-        JsonFields.WriteNullableString(w, Names.Bio, "I work at statefarm");
-        JsonFields.WriteNullableString(w, Names.Image, null);
+        w.WriteString(Names.Username, "jake"u8);
+        w.WriteString(Names.Bio, "I work at statefarm"u8);
+        w.WriteNull(Names.Image);
         w.WriteBoolean(Names.Following, false);
         w.WriteEndObject();
         w.WriteEndObject();

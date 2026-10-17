@@ -21,10 +21,4 @@ public static class JsonFields
         b[23] = (byte)'Z';
         w.WriteString(name, b);
     }
-
-    public static void WriteNullableString(Utf8JsonWriter w, JsonEncodedText name, string? value)
-    {
-        if (value is null) w.WriteNull(name);
-        else w.WriteString(name, value);
-    }
 }

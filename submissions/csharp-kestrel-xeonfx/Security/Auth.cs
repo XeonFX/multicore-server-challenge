@@ -20,7 +20,7 @@ public static class Auth
     }
 
     /// <summary>The token the request presented (call after Viewer accepted it).</summary>
-    public static string Token(HttpContext ctx) => Header(ctx)![Scheme.Length..];
+    public static ReadOnlySpan<char> Token(HttpContext ctx) => Header(ctx).AsSpan(Scheme.Length);
 
     const string Scheme = "Token ";
 

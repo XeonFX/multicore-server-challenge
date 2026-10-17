@@ -17,10 +17,10 @@ public static class Articles
     static void Write(Utf8JsonWriter w, NpgsqlDataReader r, int c, bool body)
     {
         w.WriteStartObject();
-        w.WriteString(Names.Slug, r.GetString(c++));
-        w.WriteString(Names.Title, r.GetString(c++));
-        w.WriteString(Names.Description, r.GetString(c++));
-        if (body) w.WriteString(Names.Body, r.GetString(c++));
+        Rows.WriteText(w, Names.Slug, r, c++);
+        Rows.WriteText(w, Names.Title, r, c++);
+        Rows.WriteText(w, Names.Description, r, c++);
+        if (body) Rows.WriteText(w, Names.Body, r, c++);
         JsonFields.WriteTimestamp(w, Names.CreatedAt, r.GetFieldValue<DateTime>(c++));
         JsonFields.WriteTimestamp(w, Names.UpdatedAt, r.GetFieldValue<DateTime>(c++));
         w.WritePropertyName(Names.TagList);

@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Conduit.Data;
@@ -10,27 +11,21 @@ namespace Conduit.Endpoints;
 
 public static class Users
 {
-    readonly record struct User(string Username, string Email, string? Bio, string? Image)
-    {
-        /// <summary>The user from columns username, email, bio, image starting at <paramref name="c"/>.</summary>
-        public static User Read(NpgsqlDataReader r, int c) =>
-            new(r.GetString(c), r.GetString(c + 1), Rows.NullableString(r, c + 2), Rows.NullableString(r, c + 3));
-    }
-
-    static Task Send(HttpContext ctx, int status, in User u, string token)
+    /// <summary>{"user": ...} from columns username, email, bio, image starting at <paramref name="c"/>, with <paramref name="token"/>.</summary>
+    static JsonOut User(NpgsqlDataReader r, int c, ReadOnlySpan<char> token)
     {
         var j = JsonOut.Rent();
         var w = j.W;
         w.WriteStartObject();
         w.WriteStartObject(Names.User);
-        w.WriteString(Names.Email, u.Email);
+        Rows.WriteText(w, Names.Email, r, c + 1);
         w.WriteString(Names.Token, token);
-        w.WriteString(Names.Username, u.Username);
-        JsonFields.WriteNullableString(w, Names.Bio, u.Bio);
-        JsonFields.WriteNullableString(w, Names.Image, u.Image);
+        Rows.WriteText(w, Names.Username, r, c);
+        Rows.WriteNullableText(w, Names.Bio, r, c + 2);
+        Rows.WriteNullableText(w, Names.Image, r, c + 3);
         w.WriteEndObject();
         w.WriteEndObject();
-        return Responses.Send(ctx, status, j);
+        return j;
     }
 
     // POST /api/users
@@ -47,19 +42,18 @@ public static class Users
         if (Passwords.TooLong(password)) { await Responses.Unprocessable(ctx, "password is too long"); return; }
         string hash = await Passwords.HashAsync(password, ctx.RequestAborted);
 
-        long id;
-        User user;
+        JsonOut j;
         try
         {
-            (id, user) = await Db.Writer.Run(Db.Command(Sql.Register, Db.P(username), Db.P(email), Db.P(hash)),
-                static r => (r!.GetInt64(0), User.Read(r, 1)), ctx.RequestAborted);
+            j = await Db.Writer.Run(Db.Command(Sql.Register, Db.P(username), Db.P(email), Db.P(hash)),
+                static r => User(r!, 1, Jwt.Issue(r!.GetInt64(0))), ctx.RequestAborted);
         }
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
         {
             await Responses.Unprocessable(ctx, "username or email is already taken");
             return;
         }
-        await Send(ctx, 201, user, Jwt.Issue(id));
+        await Responses.Send(ctx, 201, j);
     }
 
     // POST /api/users/login
@@ -73,22 +67,30 @@ public static class Users
             return;
         }
 
-        long id = 0;
-        User user = default;
-        string hash = Passwords.UnknownUserHash;
-        await using (var cmd = Db.Source.CreateCommand(Sql.Login))
+        // The response is built while the row is at hand and sent only if the password matches.
+        JsonOut? j = null;
+        try
         {
-            cmd.Parameters.Add(Db.P(email));
-            await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
-            if (await r.ReadAsync())
+            string hash = Passwords.UnknownUserHash;
+            await using (var cmd = Db.Source.CreateCommand(Sql.Login))
             {
-                id = r.GetInt64(0);
-                user = User.Read(r, 1);
-                hash = r.GetString(5);
+                cmd.Parameters.Add(Db.P(email));
+                await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
+                if (await r.ReadAsync())
+                {
+                    hash = r.GetString(5);
+                    j = User(r, 1, Jwt.Issue(r.GetInt64(0)));
+                }
             }
+            if (!await Passwords.VerifyAsync(password, hash, ctx.RequestAborted) || j is null) { await Responses.Error(ctx, 401, "invalid email or password"); return; }
+            var ok = j;
+            j = null;
+            await Responses.Send(ctx, 200, ok);
         }
-        if (!await Passwords.VerifyAsync(password, hash, ctx.RequestAborted) || id == 0) { await Responses.Error(ctx, 401, "invalid email or password"); return; }
-        await Send(ctx, 200, user, Jwt.Issue(id));
+        finally
+        {
+            j?.Dispose(); // a wrong password, or a failure on the way
+        }
     }
 
     // GET /api/user
@@ -100,7 +102,7 @@ public static class Users
         cmd.Parameters.Add(Db.P(viewer));
         await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
         if (!await r.ReadAsync()) { await Responses.Unauthorized(ctx); return; }
-        await Send(ctx, 200, User.Read(r, 0), Auth.Token(ctx));
+        await Responses.Send(ctx, 200, User(r, 0, Auth.Token(ctx)));
     }
 
     // PUT /api/user
@@ -124,19 +126,20 @@ public static class Users
             hash = await Passwords.HashAsync(password, ctx.RequestAborted);
         }
 
-        User? user;
+        JsonOut? j;
         try
         {
-            user = await Db.Writer.Run(
+            string token = Auth.Token(ctx).ToString();
+            j = await Db.Writer.Run(
                 Db.Command(Sql.UpdateUser, Db.P(viewer), Db.Text(email), Db.Text(username), Db.Text(hash), Db.Text(bio), Db.Text(image)),
-                static r => r is null ? (User?)null : User.Read(r, 0), ctx.RequestAborted);
+                r => r is null ? null : User(r, 0, token), ctx.RequestAborted);
         }
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
         {
             await Responses.Unprocessable(ctx, "username or email is already taken");
             return;
         }
-        if (user is { } updated) await Send(ctx, 200, updated, Auth.Token(ctx));
+        if (j is not null) await Responses.Send(ctx, 200, j);
         else await Responses.Unauthorized(ctx);
     }
 }
