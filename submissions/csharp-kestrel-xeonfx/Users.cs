@@ -22,9 +22,19 @@ public static class Users
     }
 
     /// <summary>The user from columns username, email, bio, image starting at <paramref name="c"/>.</summary>
-    static void WriteUser(JsonOut j, NpgsqlDataReader r, int c, string token) =>
-        WriteUser(j, r.GetString(c + 1), token, r.GetString(c), r.IsDBNull(c + 2) ? null : r.GetString(c + 2),
-            r.IsDBNull(c + 3) ? null : r.GetString(c + 3));
+    static void WriteUser(JsonOut j, NpgsqlDataReader r, int c, string token)
+    {
+        var w = j.W;
+        w.WriteStartObject();
+        w.WriteStartObject(Names.User);
+        w.WriteString(Names.Email, r.GetString(c + 1));
+        w.WriteString(Names.Token, token);
+        w.WriteString(Names.Username, r.GetString(c));
+        Http.WriteNullableString(w, Names.Bio, r, c + 2);
+        Http.WriteNullableString(w, Names.Image, r, c + 3);
+        w.WriteEndObject();
+        w.WriteEndObject();
+    }
 
     // POST /api/users
     public static async Task Register(HttpContext ctx)

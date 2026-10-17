@@ -44,8 +44,8 @@ unchanged, on the same Postgres 18 with the same config.
 Users think for a tenth of the workload's 7 s (`-think-scale 0.1`), so these counts are not the scoring box's;
 they rank the servers under the same load. Every login and sign-up succeeded in every C# run up to its limit.
 The 1-CPU box is a 2-vCPU OVH VPS; 2 to 6 CPUs are a Mac mini M1 in a Linux VM. 8 CPUs needs a separate
-load generator machine, which I didn't have. On the mini, CPUs 5 and 6 are
-efficiency cores and the load generator had two cores left, so the 6-CPU row understates every server.
+load generator machine, which I didn't have. On the mini, CPUs 5 and 6 are efficiency cores and the load
+generator had two cores left, so the 6-CPU row understates every server.
 
 Where it comes from, at 3,500 users on 4 CPUs (CPU time per request):
 
@@ -104,8 +104,8 @@ much as a hundred or more other requests.
   On arm64 four interleaved are 23.6 ms against 74.2 ms one at a time. Go's `x/crypto/bcrypt` is about 75 ms.
 - **One thread per two cores.** Fewer threads mean jobs queue and get interleaved; but when every core is
   busy each thread only gets its share of the CPU, while logins grow with the cores. On 4 CPUs one thread let
-  two thirds of the logins fail at 11,000 users; two kept every login working up to the limit. On 6 CPUs two threads lost
-  46% of the logins just past the limit, three kept them all.
+  two thirds of the logins fail at 11,000 users; two kept every login working up to the limit. On 6 CPUs two
+  threads lost 46% of the logins just past the limit, three kept them all.
 - **Unknown emails cost the same** as a wrong password: the login checks against a hash of a random password,
   so response times don't tell which emails have accounts.
 

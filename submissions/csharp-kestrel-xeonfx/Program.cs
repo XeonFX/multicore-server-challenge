@@ -23,7 +23,7 @@ public static class Program
         int poolSize = int.Parse(Env("DB_POOL_SIZE", (4 * cores).ToString()));
         // One per two cores. Under load jobs queue up and a worker runs up to four interleaved, so fewer threads
         // spend less CPU per hash; but when every core is busy each thread gets only its share of the CPU, and
-        // logins grow with the cores: at 4 cores one thread let most logins time out, two kept up.
+        // logins grow with the cores: at 4 cores one thread let two thirds of the logins fail, two kept up.
         int bcryptThreads = int.Parse(Env("BCRYPT_THREADS", Math.Max(1, cores / 2).ToString()));
         bool multiplexing = Env("DB_MULTIPLEXING", "1") != "0";
 

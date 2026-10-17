@@ -26,11 +26,12 @@ public static class Jwt
     /// every call, which costs about as much as the MAC. Issue and Verify never await, so no other caller shares it.</summary>
     static void Sign(ReadOnlySpan<byte> input, Span<byte> mac)
     {
-        if (t_hmacKey != _key)
+        var key = _key;
+        if (t_hmacKey != key)
         {
             t_hmac?.Dispose();
-            t_hmac = new HMACSHA256(_key);
-            t_hmacKey = _key;
+            t_hmac = new HMACSHA256(key);
+            t_hmacKey = key;
         }
         t_hmac!.TryComputeHash(input, mac, out _);
     }

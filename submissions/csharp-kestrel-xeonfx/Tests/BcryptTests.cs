@@ -47,7 +47,7 @@ public class BcryptTests
     });
 
     /// <summary>A batch of 1 to 4 jobs run interleaved gives each job the hash it gets alone.</summary>
-    [Property(MaxTest = 15)]
+    [Property(MaxTest = 30)]
     public Property BatchEqualsSingles() => Prop.ForAll(
         Gen.ArrayOf(Gen.Zip(Passwords().Generator, Salts().Generator), 4).ToArbitrary(), inputs =>
     {
