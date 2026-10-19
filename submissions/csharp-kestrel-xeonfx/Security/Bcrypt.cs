@@ -160,18 +160,20 @@ public static unsafe partial class Bcrypt
     static uint F(uint* st, uint x) =>
         ((st[S + (nuint)(x >> 24)] + st[S + 0x100 + (nuint)(byte)(x >> 16)]) ^ st[S + 0x200 + (nuint)(byte)(x >> 8)]) + st[S + 0x300 + (nuint)(byte)x];
 
+    // Each round XORs its P word into the half first and F's result after: "r ^= F(l) ^ P[n]" would put that XOR
+    // on the chain every round waits for, after the S-box loads. On x86 and arm64 that made a hash 6 to 10% faster.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static void Encipher(uint* st, ref uint xl, ref uint xr)
     {
         uint l = xl ^ st[P], r = xr;
-        r ^= F(st, l) ^ st[P + 1]; l ^= F(st, r) ^ st[P + 2];
-        r ^= F(st, l) ^ st[P + 3]; l ^= F(st, r) ^ st[P + 4];
-        r ^= F(st, l) ^ st[P + 5]; l ^= F(st, r) ^ st[P + 6];
-        r ^= F(st, l) ^ st[P + 7]; l ^= F(st, r) ^ st[P + 8];
-        r ^= F(st, l) ^ st[P + 9]; l ^= F(st, r) ^ st[P + 10];
-        r ^= F(st, l) ^ st[P + 11]; l ^= F(st, r) ^ st[P + 12];
-        r ^= F(st, l) ^ st[P + 13]; l ^= F(st, r) ^ st[P + 14];
-        r ^= F(st, l) ^ st[P + 15]; l ^= F(st, r) ^ st[P + 16];
+        r ^= st[P + 1]; r ^= F(st, l); l ^= st[P + 2]; l ^= F(st, r);
+        r ^= st[P + 3]; r ^= F(st, l); l ^= st[P + 4]; l ^= F(st, r);
+        r ^= st[P + 5]; r ^= F(st, l); l ^= st[P + 6]; l ^= F(st, r);
+        r ^= st[P + 7]; r ^= F(st, l); l ^= st[P + 8]; l ^= F(st, r);
+        r ^= st[P + 9]; r ^= F(st, l); l ^= st[P + 10]; l ^= F(st, r);
+        r ^= st[P + 11]; r ^= F(st, l); l ^= st[P + 12]; l ^= F(st, r);
+        r ^= st[P + 13]; r ^= F(st, l); l ^= st[P + 14]; l ^= F(st, r);
+        r ^= st[P + 15]; r ^= F(st, l); l ^= st[P + 16]; l ^= F(st, r);
         xl = r ^ st[P + 17];
         xr = l;
     }
@@ -224,14 +226,14 @@ public static unsafe partial class Bcrypt
     {
         const int Q = Lane + P;
         uint l1 = xl1 ^ st[P], r1 = xr1, l2 = xl2 ^ st[Q], r2 = xr2;
-        r1 ^= F(st, l1) ^ st[P + 1]; r2 ^= F2(st, l2) ^ st[Q + 1]; l1 ^= F(st, r1) ^ st[P + 2]; l2 ^= F2(st, r2) ^ st[Q + 2];
-        r1 ^= F(st, l1) ^ st[P + 3]; r2 ^= F2(st, l2) ^ st[Q + 3]; l1 ^= F(st, r1) ^ st[P + 4]; l2 ^= F2(st, r2) ^ st[Q + 4];
-        r1 ^= F(st, l1) ^ st[P + 5]; r2 ^= F2(st, l2) ^ st[Q + 5]; l1 ^= F(st, r1) ^ st[P + 6]; l2 ^= F2(st, r2) ^ st[Q + 6];
-        r1 ^= F(st, l1) ^ st[P + 7]; r2 ^= F2(st, l2) ^ st[Q + 7]; l1 ^= F(st, r1) ^ st[P + 8]; l2 ^= F2(st, r2) ^ st[Q + 8];
-        r1 ^= F(st, l1) ^ st[P + 9]; r2 ^= F2(st, l2) ^ st[Q + 9]; l1 ^= F(st, r1) ^ st[P + 10]; l2 ^= F2(st, r2) ^ st[Q + 10];
-        r1 ^= F(st, l1) ^ st[P + 11]; r2 ^= F2(st, l2) ^ st[Q + 11]; l1 ^= F(st, r1) ^ st[P + 12]; l2 ^= F2(st, r2) ^ st[Q + 12];
-        r1 ^= F(st, l1) ^ st[P + 13]; r2 ^= F2(st, l2) ^ st[Q + 13]; l1 ^= F(st, r1) ^ st[P + 14]; l2 ^= F2(st, r2) ^ st[Q + 14];
-        r1 ^= F(st, l1) ^ st[P + 15]; r2 ^= F2(st, l2) ^ st[Q + 15]; l1 ^= F(st, r1) ^ st[P + 16]; l2 ^= F2(st, r2) ^ st[Q + 16];
+        r1 ^= st[P + 1]; r1 ^= F(st, l1); r2 ^= st[Q + 1]; r2 ^= F2(st, l2); l1 ^= st[P + 2]; l1 ^= F(st, r1); l2 ^= st[Q + 2]; l2 ^= F2(st, r2);
+        r1 ^= st[P + 3]; r1 ^= F(st, l1); r2 ^= st[Q + 3]; r2 ^= F2(st, l2); l1 ^= st[P + 4]; l1 ^= F(st, r1); l2 ^= st[Q + 4]; l2 ^= F2(st, r2);
+        r1 ^= st[P + 5]; r1 ^= F(st, l1); r2 ^= st[Q + 5]; r2 ^= F2(st, l2); l1 ^= st[P + 6]; l1 ^= F(st, r1); l2 ^= st[Q + 6]; l2 ^= F2(st, r2);
+        r1 ^= st[P + 7]; r1 ^= F(st, l1); r2 ^= st[Q + 7]; r2 ^= F2(st, l2); l1 ^= st[P + 8]; l1 ^= F(st, r1); l2 ^= st[Q + 8]; l2 ^= F2(st, r2);
+        r1 ^= st[P + 9]; r1 ^= F(st, l1); r2 ^= st[Q + 9]; r2 ^= F2(st, l2); l1 ^= st[P + 10]; l1 ^= F(st, r1); l2 ^= st[Q + 10]; l2 ^= F2(st, r2);
+        r1 ^= st[P + 11]; r1 ^= F(st, l1); r2 ^= st[Q + 11]; r2 ^= F2(st, l2); l1 ^= st[P + 12]; l1 ^= F(st, r1); l2 ^= st[Q + 12]; l2 ^= F2(st, r2);
+        r1 ^= st[P + 13]; r1 ^= F(st, l1); r2 ^= st[Q + 13]; r2 ^= F2(st, l2); l1 ^= st[P + 14]; l1 ^= F(st, r1); l2 ^= st[Q + 14]; l2 ^= F2(st, r2);
+        r1 ^= st[P + 15]; r1 ^= F(st, l1); r2 ^= st[Q + 15]; r2 ^= F2(st, l2); l1 ^= st[P + 16]; l1 ^= F(st, r1); l2 ^= st[Q + 16]; l2 ^= F2(st, r2);
         xl1 = r1 ^ st[P + 17]; xr1 = l1;
         xl2 = r2 ^ st[Q + 17]; xr2 = l2;
     }

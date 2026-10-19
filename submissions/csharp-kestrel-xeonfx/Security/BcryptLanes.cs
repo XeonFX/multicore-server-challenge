@@ -90,22 +90,22 @@ public static unsafe partial class Bcrypt
     static void Encipher3(uint* st, ref uint xl0, ref uint xr0, ref uint xl1, ref uint xr1, ref uint xl2, ref uint xr2)
     {
         uint l0 = xl0 ^ st[P], r0 = xr0; uint l1 = xl1 ^ st[1 * Lane + P], r1 = xr1; uint l2 = xl2 ^ st[2 * Lane + P], r2 = xr2;
-        r0 ^= F(st, l0) ^ st[P + 1]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 1]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 1];
-        l0 ^= F(st, r0) ^ st[P + 2]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 2]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 2];
-        r0 ^= F(st, l0) ^ st[P + 3]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 3]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 3];
-        l0 ^= F(st, r0) ^ st[P + 4]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 4]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 4];
-        r0 ^= F(st, l0) ^ st[P + 5]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 5]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 5];
-        l0 ^= F(st, r0) ^ st[P + 6]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 6]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 6];
-        r0 ^= F(st, l0) ^ st[P + 7]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 7]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 7];
-        l0 ^= F(st, r0) ^ st[P + 8]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 8]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 8];
-        r0 ^= F(st, l0) ^ st[P + 9]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 9]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 9];
-        l0 ^= F(st, r0) ^ st[P + 10]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 10]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 10];
-        r0 ^= F(st, l0) ^ st[P + 11]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 11]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 11];
-        l0 ^= F(st, r0) ^ st[P + 12]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 12]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 12];
-        r0 ^= F(st, l0) ^ st[P + 13]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 13]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 13];
-        l0 ^= F(st, r0) ^ st[P + 14]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 14]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 14];
-        r0 ^= F(st, l0) ^ st[P + 15]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 15]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 15];
-        l0 ^= F(st, r0) ^ st[P + 16]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 16]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 16];
+        r0 ^= st[P + 1]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 1]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 1]; r2 ^= F(st + 2 * Lane, l2);
+        l0 ^= st[P + 2]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 2]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 2]; l2 ^= F(st + 2 * Lane, r2);
+        r0 ^= st[P + 3]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 3]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 3]; r2 ^= F(st + 2 * Lane, l2);
+        l0 ^= st[P + 4]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 4]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 4]; l2 ^= F(st + 2 * Lane, r2);
+        r0 ^= st[P + 5]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 5]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 5]; r2 ^= F(st + 2 * Lane, l2);
+        l0 ^= st[P + 6]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 6]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 6]; l2 ^= F(st + 2 * Lane, r2);
+        r0 ^= st[P + 7]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 7]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 7]; r2 ^= F(st + 2 * Lane, l2);
+        l0 ^= st[P + 8]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 8]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 8]; l2 ^= F(st + 2 * Lane, r2);
+        r0 ^= st[P + 9]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 9]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 9]; r2 ^= F(st + 2 * Lane, l2);
+        l0 ^= st[P + 10]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 10]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 10]; l2 ^= F(st + 2 * Lane, r2);
+        r0 ^= st[P + 11]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 11]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 11]; r2 ^= F(st + 2 * Lane, l2);
+        l0 ^= st[P + 12]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 12]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 12]; l2 ^= F(st + 2 * Lane, r2);
+        r0 ^= st[P + 13]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 13]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 13]; r2 ^= F(st + 2 * Lane, l2);
+        l0 ^= st[P + 14]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 14]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 14]; l2 ^= F(st + 2 * Lane, r2);
+        r0 ^= st[P + 15]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 15]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 15]; r2 ^= F(st + 2 * Lane, l2);
+        l0 ^= st[P + 16]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 16]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 16]; l2 ^= F(st + 2 * Lane, r2);
         xl0 = r0 ^ st[P + 17]; xr0 = l0; xl1 = r1 ^ st[1 * Lane + P + 17]; xr1 = l1; xl2 = r2 ^ st[2 * Lane + P + 17]; xr2 = l2;
     }
 
@@ -181,22 +181,22 @@ public static unsafe partial class Bcrypt
     static void Encipher4(uint* st, ref uint xl0, ref uint xr0, ref uint xl1, ref uint xr1, ref uint xl2, ref uint xr2, ref uint xl3, ref uint xr3)
     {
         uint l0 = xl0 ^ st[P], r0 = xr0; uint l1 = xl1 ^ st[1 * Lane + P], r1 = xr1; uint l2 = xl2 ^ st[2 * Lane + P], r2 = xr2; uint l3 = xl3 ^ st[3 * Lane + P], r3 = xr3;
-        r0 ^= F(st, l0) ^ st[P + 1]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 1]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 1]; r3 ^= F(st + 3 * Lane, l3) ^ st[3 * Lane + P + 1];
-        l0 ^= F(st, r0) ^ st[P + 2]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 2]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 2]; l3 ^= F(st + 3 * Lane, r3) ^ st[3 * Lane + P + 2];
-        r0 ^= F(st, l0) ^ st[P + 3]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 3]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 3]; r3 ^= F(st + 3 * Lane, l3) ^ st[3 * Lane + P + 3];
-        l0 ^= F(st, r0) ^ st[P + 4]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 4]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 4]; l3 ^= F(st + 3 * Lane, r3) ^ st[3 * Lane + P + 4];
-        r0 ^= F(st, l0) ^ st[P + 5]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 5]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 5]; r3 ^= F(st + 3 * Lane, l3) ^ st[3 * Lane + P + 5];
-        l0 ^= F(st, r0) ^ st[P + 6]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 6]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 6]; l3 ^= F(st + 3 * Lane, r3) ^ st[3 * Lane + P + 6];
-        r0 ^= F(st, l0) ^ st[P + 7]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 7]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 7]; r3 ^= F(st + 3 * Lane, l3) ^ st[3 * Lane + P + 7];
-        l0 ^= F(st, r0) ^ st[P + 8]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 8]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 8]; l3 ^= F(st + 3 * Lane, r3) ^ st[3 * Lane + P + 8];
-        r0 ^= F(st, l0) ^ st[P + 9]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 9]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 9]; r3 ^= F(st + 3 * Lane, l3) ^ st[3 * Lane + P + 9];
-        l0 ^= F(st, r0) ^ st[P + 10]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 10]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 10]; l3 ^= F(st + 3 * Lane, r3) ^ st[3 * Lane + P + 10];
-        r0 ^= F(st, l0) ^ st[P + 11]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 11]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 11]; r3 ^= F(st + 3 * Lane, l3) ^ st[3 * Lane + P + 11];
-        l0 ^= F(st, r0) ^ st[P + 12]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 12]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 12]; l3 ^= F(st + 3 * Lane, r3) ^ st[3 * Lane + P + 12];
-        r0 ^= F(st, l0) ^ st[P + 13]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 13]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 13]; r3 ^= F(st + 3 * Lane, l3) ^ st[3 * Lane + P + 13];
-        l0 ^= F(st, r0) ^ st[P + 14]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 14]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 14]; l3 ^= F(st + 3 * Lane, r3) ^ st[3 * Lane + P + 14];
-        r0 ^= F(st, l0) ^ st[P + 15]; r1 ^= F(st + 1 * Lane, l1) ^ st[1 * Lane + P + 15]; r2 ^= F(st + 2 * Lane, l2) ^ st[2 * Lane + P + 15]; r3 ^= F(st + 3 * Lane, l3) ^ st[3 * Lane + P + 15];
-        l0 ^= F(st, r0) ^ st[P + 16]; l1 ^= F(st + 1 * Lane, r1) ^ st[1 * Lane + P + 16]; l2 ^= F(st + 2 * Lane, r2) ^ st[2 * Lane + P + 16]; l3 ^= F(st + 3 * Lane, r3) ^ st[3 * Lane + P + 16];
+        r0 ^= st[P + 1]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 1]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 1]; r2 ^= F(st + 2 * Lane, l2); r3 ^= st[3 * Lane + P + 1]; r3 ^= F(st + 3 * Lane, l3);
+        l0 ^= st[P + 2]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 2]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 2]; l2 ^= F(st + 2 * Lane, r2); l3 ^= st[3 * Lane + P + 2]; l3 ^= F(st + 3 * Lane, r3);
+        r0 ^= st[P + 3]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 3]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 3]; r2 ^= F(st + 2 * Lane, l2); r3 ^= st[3 * Lane + P + 3]; r3 ^= F(st + 3 * Lane, l3);
+        l0 ^= st[P + 4]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 4]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 4]; l2 ^= F(st + 2 * Lane, r2); l3 ^= st[3 * Lane + P + 4]; l3 ^= F(st + 3 * Lane, r3);
+        r0 ^= st[P + 5]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 5]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 5]; r2 ^= F(st + 2 * Lane, l2); r3 ^= st[3 * Lane + P + 5]; r3 ^= F(st + 3 * Lane, l3);
+        l0 ^= st[P + 6]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 6]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 6]; l2 ^= F(st + 2 * Lane, r2); l3 ^= st[3 * Lane + P + 6]; l3 ^= F(st + 3 * Lane, r3);
+        r0 ^= st[P + 7]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 7]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 7]; r2 ^= F(st + 2 * Lane, l2); r3 ^= st[3 * Lane + P + 7]; r3 ^= F(st + 3 * Lane, l3);
+        l0 ^= st[P + 8]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 8]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 8]; l2 ^= F(st + 2 * Lane, r2); l3 ^= st[3 * Lane + P + 8]; l3 ^= F(st + 3 * Lane, r3);
+        r0 ^= st[P + 9]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 9]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 9]; r2 ^= F(st + 2 * Lane, l2); r3 ^= st[3 * Lane + P + 9]; r3 ^= F(st + 3 * Lane, l3);
+        l0 ^= st[P + 10]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 10]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 10]; l2 ^= F(st + 2 * Lane, r2); l3 ^= st[3 * Lane + P + 10]; l3 ^= F(st + 3 * Lane, r3);
+        r0 ^= st[P + 11]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 11]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 11]; r2 ^= F(st + 2 * Lane, l2); r3 ^= st[3 * Lane + P + 11]; r3 ^= F(st + 3 * Lane, l3);
+        l0 ^= st[P + 12]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 12]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 12]; l2 ^= F(st + 2 * Lane, r2); l3 ^= st[3 * Lane + P + 12]; l3 ^= F(st + 3 * Lane, r3);
+        r0 ^= st[P + 13]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 13]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 13]; r2 ^= F(st + 2 * Lane, l2); r3 ^= st[3 * Lane + P + 13]; r3 ^= F(st + 3 * Lane, l3);
+        l0 ^= st[P + 14]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 14]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 14]; l2 ^= F(st + 2 * Lane, r2); l3 ^= st[3 * Lane + P + 14]; l3 ^= F(st + 3 * Lane, r3);
+        r0 ^= st[P + 15]; r0 ^= F(st, l0); r1 ^= st[1 * Lane + P + 15]; r1 ^= F(st + 1 * Lane, l1); r2 ^= st[2 * Lane + P + 15]; r2 ^= F(st + 2 * Lane, l2); r3 ^= st[3 * Lane + P + 15]; r3 ^= F(st + 3 * Lane, l3);
+        l0 ^= st[P + 16]; l0 ^= F(st, r0); l1 ^= st[1 * Lane + P + 16]; l1 ^= F(st + 1 * Lane, r1); l2 ^= st[2 * Lane + P + 16]; l2 ^= F(st + 2 * Lane, r2); l3 ^= st[3 * Lane + P + 16]; l3 ^= F(st + 3 * Lane, r3);
         xl0 = r0 ^ st[P + 17]; xr0 = l0; xl1 = r1 ^ st[1 * Lane + P + 17]; xr1 = l1; xl2 = r2 ^ st[2 * Lane + P + 17]; xr2 = l2; xl3 = r3 ^ st[3 * Lane + P + 17]; xr3 = l3;
     }
 }
