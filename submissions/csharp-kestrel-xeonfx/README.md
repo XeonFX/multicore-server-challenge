@@ -39,20 +39,32 @@ DATABASE_URL=postgres://conduit:conduit@127.0.0.1:5432/conduit JWT_SECRET=dev-se
 
 ## Results
 
-An 8-vCPU Google Cloud `c4-highcpu-8` running the server and Postgres 18, set up with `box/setup-box.sh`. The
-load came from a second machine, on the full seed with the real 7 s think time. Every run started from a fresh
-database, warmed up for 3 minutes, ramped for 60 s and was measured for 60 s.
+An 8-vCPU Google Cloud `c4-highcpu-8` (Xeon Platinum 8581C, 16 GB) running the server and Postgres 18, set up
+with `box/setup-box.sh`. The load came from two more `c4-highcpu-8` machines, on the full seed with the real 7 s
+think time. Every run started from a fresh database, warmed up for 3 minutes, ramped for 60 s and was measured
+for 60 s.
+
+| Users | p95 / p99 | Requests/s | CPU | Memory |
+|---|---|---|---|---|
+| 100,000 | 9 / 60 ms | 26,500 | 89% | 4.2 GB |
+| 110,000 | 33 / 94 ms | 29,100 | 92% | 4.4 GB |
+| 120,000 | 150 / 242 ms | 31,500 | 97% | 4.6 GB |
+| **125,000** | 192 / 231 ms | 32,400 | 98% | 4.8 GB |
+
+125,000 is the most two load machines can drive: each opens about 64k connections to the server. No run had
+errors. At 125,000 Postgres used 70 of the 98% CPU and the server 28, so the limit is CPU, not memory. The
+version before the bcrypt change below (205e743) passed the same steps and used the same CPU per request.
+
+Earlier, with one load machine and a server with two addresses, 100,000 was the most that rig could drive:
 
 | Version | Most users passed | p95 / p99 | CPU | Memory |
 |---|---|---|---|---|
-| This one | **100,000** | 273 / 313 ms | 98% | 4.1 GB |
+| 205e743 | **100,000** | 273 / 313 ms | 98% | 4.1 GB |
 | First version of this PR (b2a554c) | 80,000 | 59 / 149 ms | 96% | 4.2 GB |
 | Go example | 30,000 (not tried higher) | 8 / 15 ms | 84% | 2.7 GB |
 
-The first version failed at 100,000 users (p95 1,198 ms). 100,000 is the most this setup could drive, because
-one load machine opens about 64k connections per address and the server had two. At that point Postgres used 70
-of the 98% CPU, so the limit is CPU, not memory. No run had errors. The Rust example didn't build on this
-machine, so it's only in the older table below.
+The first version failed at 100,000 users (p95 1,198 ms). The same code is faster on the newer rig, so compare
+rows only within a table. The Rust example didn't build on this machine, so it's only in the older table below.
 
 Earlier runs on smaller machines, with users thinking a tenth as long. These rank the servers but don't predict
 the scoring box:
@@ -100,8 +112,10 @@ connections.
 A login is about one request in a thousand, but one hash costs as much CPU as a hundred other requests.
 
 - Hashes run on their own threads, so a burst of logins doesn't slow anything else.
-- A thread that finds several hashes waiting runs up to four at once, interleaved. On x86 that takes 31 ms per
-  hash instead of 76 ms (BCrypt.Net-Next takes 92 ms).
+- A thread that finds several hashes waiting runs up to four at once, interleaved. On the 8581C that takes 14 ms
+  per hash instead of 47 ms (BCrypt.Net-Next takes 60 ms).
+- Each round XORs its round key into one half before the S-box result arrives, not after. That keeps a step off
+  the chain every round waits on: 7% less per hash.
 - The first hash waits up to 200 ms for others to join it. At the real login rate, almost every hash would
   otherwise run alone.
 - A login for an unknown email still checks a hash, so response times don't reveal which emails exist.
