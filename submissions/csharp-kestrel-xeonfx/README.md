@@ -63,8 +63,8 @@ Earlier, with one load machine and a server with two addresses, 100,000 was the 
 | First version of this PR (b2a554c) | 80,000 | 59 / 149 ms | 96% | 4.2 GB |
 | Go example | 30,000 (not tried higher) | 8 / 15 ms | 84% | 2.7 GB |
 
-The first version failed at 100,000 users (p95 1,198 ms). The same code is faster on the newer rig, so compare
-rows only within a table. The Rust example didn't build on this machine, so it's only in the older table below.
+The first version failed at 100,000 users (p95 1,198 ms). The same commit passes more users on the newer rig,
+so compare rows only within a table. The Rust example didn't build on this machine, so it's only in the older table below.
 
 Earlier runs on smaller machines, with users thinking a tenth as long. These rank the servers but don't predict
 the scoring box:
@@ -98,8 +98,8 @@ connections.
 
 - **Reads in groups.** Reads wait in a queue. Each read loop sends up to 32 of them as one batch with a single
   Sync, so Postgres opens and closes one transaction for the group instead of one per read. Each statement still
-  sees fresh data. A read that fails fails alone, and the ones after it run again. This took 100,000 users from
-  failing (p95 763 ms with Npgsql's multiplexing) to passing (273 ms).
+  sees fresh data. A read that fails fails alone, and the ones after it run again. On the earlier rig this took
+  100,000 users from failing (p95 763 ms with Npgsql's multiplexing) to passing (273 ms).
 - **Writes in groups.** Two writer loops commit up to 128 writes in one transaction, so one disk flush covers all
   of them. A response goes out only after its commit. If one write fails, the others still commit and only that
   one gets the error.

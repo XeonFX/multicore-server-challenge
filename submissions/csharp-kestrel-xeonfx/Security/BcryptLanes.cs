@@ -1,4 +1,5 @@
-// 3- and 4-lane bcrypt: the 2-lane scheme of Bcrypt.cs widened. Lane k's state starts at k * Lane.
+// 3- and 4-lane bcrypt: the 2-lane scheme of Bcrypt.cs widened, rounds in the order Encipher explains. Lane k's state
+// starts at k * Lane.
 using System;
 using System.Runtime.CompilerServices;
 
