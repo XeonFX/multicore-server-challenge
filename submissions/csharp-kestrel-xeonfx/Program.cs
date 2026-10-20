@@ -26,7 +26,7 @@ public static class Program
         // Two per core: at 4 cores 8 connections beat 4 and 16 by 8-10% CPU per request (more backends contend for
         // the same cores; fewer leave reads queued behind each other).
         int readers = int.Parse(Env("DB_POOL_SIZE", (2 * cores).ToString()));
-        // One per two cores. Under load jobs queue up and a worker runs up to four interleaved, so fewer threads
+        // One per two cores. Under load jobs queue up and a worker runs up to five interleaved, so fewer threads
         // spend less CPU per hash; but when every core is busy each thread gets only its share of the CPU, and
         // logins grow with the cores: at 4 cores one thread let two thirds of the logins fail, two kept up.
         int bcryptThreads = int.Parse(Env("BCRYPT_THREADS", Math.Max(1, cores / 2).ToString()));

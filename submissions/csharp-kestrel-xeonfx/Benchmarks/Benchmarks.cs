@@ -16,8 +16,8 @@ public class BcryptBenchmarks
     const string SeedHash = "$2a$10$ZSfEoPvlcsj2XfvsSeK25em4NZ9Jm7ntGqXuLgQfHEeZPYB8899wq";
 
     readonly bool[] _results = new bool[5];
-    static readonly string[] Passwords = [Password, Password, Password, Password, Password];
-    static readonly string[] Hashes = [SeedHash, SeedHash, SeedHash, SeedHash, SeedHash];
+    static readonly string[] FivePasswords = [Password, Password, Password, Password, Password];
+    static readonly string[] FiveHashes = [SeedHash, SeedHash, SeedHash, SeedHash, SeedHash];
 
     [Benchmark(Baseline = true)]
     public bool BCryptNetNext() => BCrypt.Net.BCrypt.Verify(Password, SeedHash);
@@ -40,8 +40,10 @@ public class BcryptBenchmarks
 
     bool Interleaved(int n)
     {
-        Bcrypt.Verify(Passwords.AsSpan(0, n), Hashes.AsSpan(0, n), _results.AsSpan(0, n));
-        return _results[0];
+        Bcrypt.Verify(FivePasswords.AsSpan(0, n), FiveHashes.AsSpan(0, n), _results.AsSpan(0, n));
+        bool all = true;
+        for (int i = 0; i < n; i++) all &= _results[i];
+        return all;
     }
 }
 
