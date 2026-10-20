@@ -7,7 +7,6 @@
     <RootNamespace>Conduit</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
 
@@ -25,6 +24,7 @@
 
   <ItemGroup>
     <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="CodeFusion.Security.Bcrypt" Version="1.1.0" />
   </ItemGroup>
 
   <ItemGroup>

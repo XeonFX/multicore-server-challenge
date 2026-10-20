@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using CodeFusion.Security;
 using Conduit.Endpoints;
 using Conduit.Http;
 using Microsoft.AspNetCore.Http;
@@ -25,6 +26,11 @@ public static class Router
         {
             // A full queue refused it (counted in the stats line), not a fault: no log line per refusal.
             await Busy(ctx, e.Message);
+        }
+        catch (BcryptQueueFullException) when (!ctx.Response.HasStarted)
+        {
+            // The bcrypt queue's own refusal, counted in the stats line as the others are.
+            await Busy(ctx, "too many logins are waiting");
         }
         catch (PostgresException e) when (!ctx.Response.HasStarted && !ctx.RequestAborted.IsCancellationRequested
                                           && e.SqlState is PostgresErrorCodes.LockNotAvailable or PostgresErrorCodes.QueryCanceled)

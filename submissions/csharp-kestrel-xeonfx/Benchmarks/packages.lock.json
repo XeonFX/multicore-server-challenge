@@ -31,6 +31,11 @@
         "resolved": "0.15.8",
         "contentHash": "hfucY0ycAsB0SsoaZcaAp9oq5wlWBJcylvEJb9pmvdYUx6PD6S4mDiYnZWjdjAlLhIpe/xtGCwzORfzAzPqvzA=="
       },
+      "CodeFusion.Security.Bcrypt": {
+        "type": "Transitive",
+        "resolved": "1.1.0",
+        "contentHash": "VowkVSRjhfwPME9l0JcPPSPJ1MmezNxKyHvG55HI1uLG1yJnDY7qw3+iXDGGxtvQBNSKS44tHMfrsGK3OkQwCg=="
+      },
       "CommandLineParser": {
         "type": "Transitive",
         "resolved": "2.9.1",
@@ -186,7 +191,7 @@
       "conduit": {
         "type": "Project",
         "dependencies": {
-          "BCrypt.Net-Next": "[4.2.1, )",
+          "CodeFusion.Security.Bcrypt": "[1.1.0, )",
           "Npgsql": "[10.0.3, )"
         }
       }

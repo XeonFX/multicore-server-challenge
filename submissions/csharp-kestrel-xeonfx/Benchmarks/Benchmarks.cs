@@ -1,17 +1,23 @@
 using System;
 using BenchmarkDotNet.Attributes;
+using CodeFusion.Security;
 using Conduit.Http;
 using Conduit.Security;
 using Microsoft.AspNetCore.Http;
 
 namespace Conduit.Benchmarks;
 
-/// <summary>Cost 10, as the server runs it: one login or sign-up.</summary>
+/// <summary>Cost 10, as the server runs it: one login or sign-up, with the CodeFusion.Security.Bcrypt package the
+/// server uses and BCrypt.Net-Next.</summary>
 [MemoryDiagnoser]
 public class BcryptBenchmarks
 {
     const string Password = "password123";
     const string SeedHash = "$2a$10$ZSfEoPvlcsj2XfvsSeK25em4NZ9Jm7ntGqXuLgQfHEeZPYB8899wq";
+
+    readonly bool[] _results = new bool[5];
+    static readonly string[] Passwords = [Password, Password, Password, Password, Password];
+    static readonly string[] Hashes = [SeedHash, SeedHash, SeedHash, SeedHash, SeedHash];
 
     [Benchmark(Baseline = true)]
     public bool BCryptNetNext() => BCrypt.Net.BCrypt.Verify(Password, SeedHash);
@@ -19,32 +25,24 @@ public class BcryptBenchmarks
     [Benchmark]
     public bool Ours() => Bcrypt.Verify(Password, SeedHash);
 
-    /// <summary>Two verifications interleaved on one thread; reported per hash.</summary>
+    /// <summary>Several verifications interleaved on one thread, as the queue's workers run them; reported per hash.</summary>
     [Benchmark(OperationsPerInvoke = 2)]
-    public bool OursInterleavedPair()
-    {
-        BcryptJob a = Job(), b = Job();
-        Bcrypt.Run(a, b);
-        return a.Matches() & b.Matches();
-    }
+    public bool OursInterleavedPair() => Interleaved(2);
 
     [Benchmark(OperationsPerInvoke = 3)]
-    public bool OursInterleavedThree()
-    {
-        BcryptJob a = Job(), b = Job(), c = Job();
-        Bcrypt.Run(a, b, c);
-        return a.Matches() & b.Matches() & c.Matches();
-    }
+    public bool OursInterleavedThree() => Interleaved(3);
 
     [Benchmark(OperationsPerInvoke = 4)]
-    public bool OursInterleavedFour()
-    {
-        BcryptJob a = Job(), b = Job(), c = Job(), d = Job();
-        Bcrypt.Run(a, b, c, d);
-        return a.Matches() & b.Matches() & c.Matches() & d.Matches();
-    }
+    public bool OursInterleavedFour() => Interleaved(4);
 
-    static BcryptJob Job() => BcryptJob.ForVerify(Password, SeedHash)!;
+    [Benchmark(OperationsPerInvoke = 5)]
+    public bool OursInterleavedFive() => Interleaved(5);
+
+    bool Interleaved(int n)
+    {
+        Bcrypt.Verify(Passwords.AsSpan(0, n), Hashes.AsSpan(0, n), _results.AsSpan(0, n));
+        return _results[0];
+    }
 }
 
 [MemoryDiagnoser]

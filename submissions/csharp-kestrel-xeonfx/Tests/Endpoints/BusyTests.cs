@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using CodeFusion.Security;
 using Conduit.Data;
 using Conduit.Security;
 using Microsoft.AspNetCore.Http;
@@ -14,7 +15,8 @@ using Xunit;
 
 namespace Conduit.Tests.Endpoints;
 
-/// <summary>Through the router, a write the server can't take now is a 503 with Retry-After, and nothing else fails.</summary>
+/// <summary>Through the router, a write or a bcrypt hash the server can't take now is a 503 with Retry-After, and
+/// nothing else fails.</summary>
 [Collection(ServerState.Collection)]
 public sealed class BusyTests(BusyTests.Data data) : IClassFixture<BusyTests.Data>
 {
@@ -100,6 +102,50 @@ public sealed class BusyTests(BusyTests.Data data) : IClassFixture<BusyTests.Dat
         {
             Db.Writer = running;
             writer.Complete();
+        }
+    }
+
+    /// <summary>A login, a sign-up and a password change are refused at once while the bcrypt queue is full, and write
+    /// nothing; with room again, a sign-up goes through.</summary>
+    [Fact(Timeout = 30_000)]
+    public async Task APasswordCheckOrHashAgainstAFullBcryptQueueIs503AtOnce()
+    {
+        TestSchema.Require();
+        using var queue = new BcryptQueue(new BcryptQueueOptions { Threads = 1, Lanes = 1, MaxQueued = 1 });
+        var running = Passwords.Queue;
+        Passwords.Queue = queue;
+        try
+        {
+            // the one worker on a hash that takes about a second (cost 14), the one place to wait taken
+            var slow = queue.HashAsync("slow", 14).AsTask();
+            while (queue.QueueLength > 0) await Task.Delay(5);
+            var waiting = queue.HashAsync("waits", 4).AsTask();
+
+            foreach (var (method, path, body) in new[]
+            {
+                ("POST", "/api/users/login", """{"user":{"email":"nobody@x","password":"pw"}}"""), // checks the unknown-user hash
+                ("POST", "/api/users", """{"user":{"username":"busy","email":"busy@x","password":"pw"}}"""),
+                ("PUT", "/api/user", """{"user":{"password":"changed"}}"""),
+            })
+            {
+                var refused = await Request(method, path, body);
+                Assert.Equal(503, refused.Response.StatusCode);
+                Assert.Equal("1", refused.Response.Headers.RetryAfter.ToString());
+                await refused.Response.BodyWriter.FlushAsync();
+                Assert.Contains("too many logins are waiting", System.Text.Encoding.UTF8.GetString(((MemoryStream)refused.Response.Body).ToArray()));
+            }
+            Assert.False(slow.IsCompleted); // refused at once, not after waiting
+            Assert.Equal(3, queue.Refused);
+            Assert.Equal(0L, await data.Scalar<long>("SELECT count(*) FROM users WHERE email = 'busy@x'"));
+            Assert.Equal("h", await data.Scalar<string>("SELECT password_hash FROM users WHERE username = 'author'"));
+
+            await slow;
+            await waiting;
+            Assert.Equal(201, (await Request("POST", "/api/users", """{"user":{"username":"later","email":"later@x","password":"pw"}}""")).Response.StatusCode);
+        }
+        finally
+        {
+            Passwords.Queue = running;
         }
     }
 }

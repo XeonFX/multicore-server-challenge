@@ -47,7 +47,7 @@ public static class Program
         Db.Init(dbUrl, readers, writers);
         Passwords.Init(bcryptThreads, bcryptWindow);
         // A line of queue, commit, bcrypt and GC counters on stdout every STATS_SECONDS (0: none).
-        Stats.Start(TimeSpan.FromSeconds(int.Parse(Env("STATS_SECONDS", "10"))), () => Db.Reader.Queued, () => Db.Writer.Queued, () => Passwords.Queued);
+        Stats.Start(TimeSpan.FromSeconds(int.Parse(Env("STATS_SECONDS", "10"))), () => Db.Reader.Queued, () => Db.Writer.Queued, Passwords.Queue);
 
         var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions { Args = args });
         // The default backlog of 512 overflows while tens of thousands of users connect during the ramp; the kernel
