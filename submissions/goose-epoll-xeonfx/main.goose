@@ -2,7 +2,8 @@
 // connections, pipelined Postgres, and bcrypt on threads of its own.
 //
 // Environment: DATABASE_URL, JWT_SECRET, HOST, PORT; WORKERS (event loops, 4), PG_READERS (read connections per
-// loop, 3; each loop also has one writer), HASHERS (bcrypt threads, 2) and BCRYPT_BATCH_MS (250).
+// loop, 3; each loop also has one writer), HASHERS (bcrypt threads, 2), BCRYPT_BATCH_MS (250), READ_BATCH (most
+// list reads one execution answers, 32; 0 off) and READ_HOLD (batches in flight before reads wait, 1).
 
 import bcrypt;
 import crypto;
@@ -83,6 +84,8 @@ fn main() {
     readers = env_int("PG_READERS", 3);
     let hashers = env_int("HASHERS", 2);
     batch_ms = env_int("BCRYPT_BATCH_MS", 250);
+    batch_max = if env_or("READ_BATCH", "") == "0" { 0 } else { env_int("READ_BATCH", 32) };
+    batch_hold = env_int("READ_HOLD", 1);
     raise_nofile();
 
     var ids: i64[>..] = [];

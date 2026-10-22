@@ -29,7 +29,15 @@ let ST_COMMENTS = 21;
 let ST_CREATE_COMMENT = 22;
 let ST_DELETE_COMMENT = 23;
 let ST_TAGS = 24;
-let STATEMENTS = 25;
+let ST_BATCH_ALL = 25;           // ST_LIST_ALL .. ST_LIST_FAVORITED for many members at once, in that order
+let ST_BATCH_TAG = 26;
+let ST_BATCH_AUTHOR = 27;
+let ST_BATCH_FAVORITED = 28;
+let ST_SHARE_ALL = 29;           // the same with the articles read once
+let ST_SHARE_TAG = 30;
+let ST_SHARE_AUTHOR = 31;
+let ST_SHARE_FAVORITED = 32;
+let STATEMENTS = 33;
 
 fn slugify(out: u8[>..]&, x: const u8[:]) {
     format(out, "trim(both '-' from lower(regexp_replace(", x, ", '[^A-Za-z0-9]+', '-', 'g')))");
@@ -56,14 +64,27 @@ fn columns(out: u8[>..]&, body: bool, favorited: const u8[:], count: const u8[:]
 
 fn plain_columns(out: u8[>..]&, body: bool) { columns(out, body, FAVORITED, FAVORITES_COUNT, ""); }
 
+// One scan of the article's favorites gives both its count and whether the viewer is among them.
+let FAV_LATERAL = " LEFT JOIN LATERAL (SELECT count(*) AS fc, COALESCE(bool_or(f.user_id = $1), false) AS fav FROM favorites f WHERE f.article_id = a.id) fv ON true";
+
 // A page and its capped count in one statement: the count row with the page joined to it (an empty page leaves one
 // row whose page columns are NULL). The inner LIMIT is the constant 100 and $2 applies outside it, so the generic
 // plan is the right plan. Columns: the article columns, a.id, then the count. $2 limit, $3 offset, $4 filter.
-fn page_with_count(out: u8[>..]&, count: const u8[:], ids: const u8[:], follow: const u8[:]) {
-    format(out, "WITH c AS (", count, ") SELECT p.*, c.n FROM c LEFT JOIN LATERAL (SELECT ");
-    columns(out, false, FAVORITED, FAVORITES_COUNT, follow);
-    format(out, ", a.id FROM (SELECT id FROM (", ids, " LIMIT 100 OFFSET $3) b ORDER BY id DESC LIMIT $2) p ",
-           "JOIN articles a ON a.id = p.id JOIN users u ON u.id = a.author_id ORDER BY a.id DESC) p ON true ORDER BY p.id DESC");
+fn page_with_count(out: u8[>..]&, i: i64) {
+    format(out, "WITH c AS (", list_count(i), ") SELECT p.*, c.n FROM c LEFT JOIN LATERAL (SELECT ");
+    let one_scan = i == ST_LIST_ALL || i == ST_LIST_TAG;
+    if one_scan {
+        columns(out, false, "fv.fav", "fv.fc", "");
+    } else if i == ST_LIST_FAVORITED {
+        // The viewer's favorites and followees are read once for the page, not probed per article.
+        columns(out, false, "a.id = ANY(ARRAY(SELECT vf.article_id FROM favorites vf WHERE vf.user_id = $1))", FAVORITES_COUNT,
+                "a.author_id = ANY(ARRAY(SELECT vo.followee_id FROM follows vo WHERE vo.follower_id = $1))");
+    } else {
+        columns(out, false, FAVORITED, FAVORITES_COUNT, if i == ST_FEED { "true" } else { "" });
+    }
+    format(out, ", a.id FROM (", list_page(i), ") p JOIN articles a ON a.id = p.id JOIN users u ON u.id = a.author_id");
+    if one_scan { out.append(FAV_LATERAL); }
+    out.append(" ORDER BY a.id DESC) p ON true ORDER BY p.id DESC");
 }
 
 // min(1000, rows): small sets are counted, and a 1000th row proves the cap without counting to it.
@@ -73,6 +94,79 @@ fn capped_from(from: const u8[:], key: const u8[:]) -> u8[>..] {
 }
 
 fn capped_select(select: const u8[:]) -> u8[>..] { str("SELECT count(*) AS n FROM (", select, " LIMIT 1000) s") }
+
+// A list's capped count (one row, n).
+fn list_count(i: i64) -> u8[>..] {
+    return match i {
+        ST_LIST_ALL => capped_from("FROM articles a", "a.id"),
+        ST_LIST_TAG => capped_from("FROM article_tags at WHERE at.tag_id = (SELECT t.id FROM tags t WHERE t.name = $4)", "at.article_id"),
+        ST_LIST_AUTHOR => capped_select("SELECT 1 FROM articles a WHERE a.author_id = (SELECT u.id FROM users u WHERE u.username = $4)"),
+        ST_LIST_FAVORITED => capped_select("SELECT 1 FROM favorites f WHERE f.user_id = (SELECT fu.id FROM users fu WHERE fu.username = $4)"),
+        _ => capped_select("SELECT 1 FROM articles a WHERE a.author_id IN (SELECT fo.followee_id FROM follows fo WHERE fo.follower_id = $1)"),
+    };
+}
+
+// A list's page of article ids, newest first.
+fn list_page(i: i64) -> u8[>..] {
+    let ids = match i {
+        ST_LIST_ALL => "SELECT id FROM articles ORDER BY id DESC",
+        ST_LIST_TAG => "SELECT at.article_id AS id FROM article_tags at WHERE at.tag_id = (SELECT t.id FROM tags t WHERE t.name = $4) ORDER BY at.article_id DESC",
+        ST_LIST_AUTHOR => "SELECT a2.id FROM articles a2 WHERE a2.author_id = (SELECT au.id FROM users au WHERE au.username = $4) ORDER BY a2.id DESC",
+        ST_LIST_FAVORITED => "SELECT f.article_id AS id FROM favorites f WHERE f.user_id = (SELECT fu.id FROM users fu WHERE fu.username = $4) ORDER BY f.article_id DESC",
+        // Being in the feed proves the viewer follows the author, in the same snapshot. $4 is limit + offset.
+        _ => "SELECT x.id FROM follows fo CROSS JOIN LATERAL (SELECT a2.id FROM articles a2 WHERE a2.author_id = fo.followee_id ORDER BY a2.id DESC LIMIT $4) x WHERE fo.follower_id = $1 ORDER BY x.id DESC",
+    };
+    return str("SELECT id FROM (", ids, " LIMIT 100 OFFSET $3) b ORDER BY id DESC LIMIT $2");
+}
+
+// The sql with each $n parameter replaced by r.pn, the column of the request row it runs for. Every '$' is a
+// parameter: the list statements have no '$' in a literal.
+fn lateral(out: u8[>..]&, sql: const u8[:]) {
+    for c in sql { if c == '$' { out.append("r.p"); } else { out.push(c); } }
+}
+
+// The requests of a batch: one row per member, its parameters as p1.., and its position as ord.
+fn requests(out: u8[>..]&, nparams: i64) {
+    out.append("unnest(");
+    for k in nparams { format(out, if k > 0 { "," } else { "" }, "$", k + 1, if k < 3 { "::bigint[]" } else { "::text[]" }); }
+    out.append(") WITH ORDINALITY AS r(");
+    for k in nparams { format(out, "p", k + 1, ","); }
+    out.append("ord)");
+}
+
+fn list_params(i: i64) -> i64 { if i == ST_LIST_ALL { 3 } else { 4 } }
+
+// Queued lists of one kind as one execution: each member's page runs as before, and its rows come back in member
+// order with ord as the last column.
+fn batch_list(out: u8[>..]&, i: i64) {
+    out.append("SELECT q.*, r.ord FROM ");
+    requests(out, list_params(i));
+    out.append(" CROSS JOIN LATERAL (");
+    var one: u8[>..] = [];
+    page_with_count(one, i);
+    lateral(out, one);
+    out.append(") q ORDER BY r.ord, q.id DESC");
+}
+
+// The same, for members that mostly ask for the same page: the pages are cut first, and every distinct article is
+// read once (tags, favorite count, author); only favorited and following are worked out per member.
+fn shared_list(out: u8[>..]&, i: i64) {
+    out.append("WITH r AS MATERIALIZED (SELECT * FROM ");
+    requests(out, list_params(i));
+    out.append("), counted AS MATERIALIZED (SELECT r.*, c.n FROM r CROSS JOIN LATERAL (");
+    lateral(out, list_count(i));
+    out.append(") c), pages AS MATERIALIZED (SELECT r.ord, r.p1 AS viewer, r.n, p.id FROM counted r LEFT JOIN LATERAL (");
+    lateral(out, list_page(i));
+    format(out, ") p ON true), ids AS (SELECT DISTINCT id FROM pages WHERE id IS NOT NULL), ",
+           "e AS MATERIALIZED (SELECT a.id, a.slug, a.title, a.description, a.created_at, a.updated_at, a.author_id, ",
+           TAG_LIST, " AS tags, ", FAVORITES_COUNT, " AS fc, u.username, u.bio, u.image ",
+           "FROM ids JOIN articles a ON a.id = ids.id JOIN users u ON u.id = a.author_id) ",
+           "SELECT e.slug, e.title, e.description, e.created_at, e.updated_at, e.tags, e.fc, ",
+           "(p.viewer <> 0 AND EXISTS (SELECT 1 FROM favorites f WHERE f.article_id = e.id AND f.user_id = p.viewer)), ",
+           "e.username, e.bio, e.image, ",
+           "(p.viewer <> 0 AND EXISTS (SELECT 1 FROM follows fo WHERE fo.follower_id = p.viewer AND fo.followee_id = e.author_id)), ",
+           "e.id, p.n, p.ord FROM pages p LEFT JOIN e ON e.id = p.id ORDER BY p.ord, e.id DESC");
+}
 
 fn statement(out: u8[>..]&, i: i64) {
     match i {
@@ -87,21 +181,9 @@ fn statement(out: u8[>..]&, i: i64) {
         },
         ST_FOLLOW => out.append("WITH t AS (SELECT id, username, bio, image FROM users WHERE username = $2), w AS (INSERT INTO follows (follower_id, followee_id) SELECT $1, id FROM t ON CONFLICT DO NOTHING) SELECT username, bio, image FROM t"),
         ST_UNFOLLOW => out.append("WITH t AS (SELECT id, username, bio, image FROM users WHERE username = $2), w AS (DELETE FROM follows WHERE follower_id = $1 AND followee_id = (SELECT id FROM t)) SELECT username, bio, image FROM t"),
-        ST_LIST_ALL => page_with_count(out, capped_from("FROM articles a", "a.id"), "SELECT id FROM articles ORDER BY id DESC", ""),
-        ST_LIST_TAG => page_with_count(out,
-            capped_from("FROM article_tags at WHERE at.tag_id = (SELECT t.id FROM tags t WHERE t.name = $4)", "at.article_id"),
-            "SELECT at.article_id AS id FROM article_tags at WHERE at.tag_id = (SELECT t.id FROM tags t WHERE t.name = $4) ORDER BY at.article_id DESC", ""),
-        ST_LIST_AUTHOR => page_with_count(out,
-            capped_select("SELECT 1 FROM articles a WHERE a.author_id = (SELECT u.id FROM users u WHERE u.username = $4)"),
-            "SELECT a2.id FROM articles a2 WHERE a2.author_id = (SELECT au.id FROM users au WHERE au.username = $4) ORDER BY a2.id DESC", ""),
-        ST_LIST_FAVORITED => page_with_count(out,
-            capped_select("SELECT 1 FROM favorites f WHERE f.user_id = (SELECT fu.id FROM users fu WHERE fu.username = $4)"),
-            "SELECT f.article_id AS id FROM favorites f WHERE f.user_id = (SELECT fu.id FROM users fu WHERE fu.username = $4) ORDER BY f.article_id DESC", ""),
-        // Being in the feed proves the viewer follows the author, in the same snapshot. $4 is limit + offset.
-        ST_FEED => page_with_count(out,
-            capped_select("SELECT 1 FROM articles a WHERE a.author_id IN (SELECT fo.followee_id FROM follows fo WHERE fo.follower_id = $1)"),
-            "SELECT x.id FROM follows fo CROSS JOIN LATERAL (SELECT a2.id FROM articles a2 WHERE a2.author_id = fo.followee_id ORDER BY a2.id DESC LIMIT $4) x WHERE fo.follower_id = $1 ORDER BY x.id DESC",
-            "true"),
+        ST_LIST_ALL, ST_LIST_TAG, ST_LIST_AUTHOR, ST_LIST_FAVORITED, ST_FEED => page_with_count(out, i),
+        ST_BATCH_ALL, ST_BATCH_TAG, ST_BATCH_AUTHOR, ST_BATCH_FAVORITED => batch_list(out, ST_LIST_ALL + i - ST_BATCH_ALL),
+        ST_SHARE_ALL, ST_SHARE_TAG, ST_SHARE_AUTHOR, ST_SHARE_FAVORITED => shared_list(out, ST_LIST_ALL + i - ST_SHARE_ALL),
         ST_ARTICLE => {
             out.append("SELECT ");
             plain_columns(out, true);
@@ -115,7 +197,8 @@ fn statement(out: u8[>..]&, i: i64) {
         },
         // New names go in sorted order, so two creates adding the same new tags wait on each other instead of
         // deadlocking.
-        ST_INSERT_TAGS => out.append("INSERT INTO tags (name) SELECT DISTINCT unnest($1::text[]) ORDER BY 1 ON CONFLICT (name) DO NOTHING"),
+        // Names already there are read, not inserted: only the missing ones take the insert and conflict check.
+        ST_INSERT_TAGS => out.append("INSERT INTO tags (name) SELECT x.name FROM (SELECT DISTINCT unnest($1::text[]) AS name) x WHERE NOT EXISTS (SELECT 1 FROM tags t WHERE t.name = x.name) ORDER BY 1 ON CONFLICT (name) DO NOTHING"),
         ST_INSERT_ARTICLE_TAGS => out.append("INSERT INTO article_tags (article_id, tag_id) SELECT currval(pg_get_serial_sequence('articles', 'id')), t.id FROM tags t WHERE t.name = ANY($1::text[])"),
         ST_INSERTED_ARTICLE => {
             out.append("SELECT ");
@@ -143,10 +226,10 @@ fn statement(out: u8[>..]&, i: i64) {
             columns(out, true, "false", str("(", FAVORITES_COUNT, " - (", VIEWER_FAVORITE, ")::int)"), "");
             out.append(" FROM articles a JOIN users u ON u.id = a.author_id WHERE a.id = (SELECT id FROM t)");
         },
-        // No row: unknown article. One row with a NULL id: no comments.
+        // No row: unknown article. One row with a NULL id: no comments. The viewer's followees are read once.
         ST_COMMENTS => {
             out.append("SELECT x.id, x.created_at, x.updated_at, x.body, x.username, x.bio, x.image, x.following FROM articles a LEFT JOIN LATERAL (SELECT c.id, c.created_at, c.updated_at, c.body, u.username, u.bio, u.image, ");
-            following(out, "c.author_id");
+            out.append("($1 <> 0 AND c.author_id IN (SELECT vo.followee_id FROM follows vo WHERE vo.follower_id = $1))");
             out.append(" AS following FROM comments c JOIN users u ON u.id = c.author_id WHERE c.article_id = a.id ORDER BY c.created_at DESC, c.id DESC LIMIT 100) x ON true WHERE a.slug = $2 ORDER BY x.created_at DESC, x.id DESC");
         },
         // $2 body, $3 slug. No row: unknown article.
@@ -159,7 +242,7 @@ fn statement(out: u8[>..]&, i: i64) {
     }
 }
 
-// The parameter types: i int8, t text, a text[].
+// The parameter types: i int8, t text, I int8[], a text[].
 fn statement_types(i: i64) -> const u8[:] {
     match i {
         ST_REGISTER => "ttt",
@@ -169,6 +252,8 @@ fn statement_types(i: i64) -> const u8[:] {
         ST_LIST_ALL => "iii",
         ST_LIST_TAG, ST_LIST_AUTHOR, ST_LIST_FAVORITED => "iiit",
         ST_FEED => "iiii",
+        ST_BATCH_ALL, ST_SHARE_ALL => "III",
+        ST_BATCH_TAG, ST_BATCH_AUTHOR, ST_BATCH_FAVORITED, ST_SHARE_TAG, ST_SHARE_AUTHOR, ST_SHARE_FAVORITED => "IIIa",
         ST_INSERT_ARTICLE => "ittt",
         ST_INSERT_TAGS, ST_INSERT_ARTICLE_TAGS => "a",
         ST_INSERTED_ARTICLE => "i",
@@ -187,7 +272,7 @@ fn prepare_all(out: u8[>..]&) {
         statement(sql, i);
         var types: i64[..8] = [];
         for c in statement_types(i) {
-            types.push(if c == 'i' { OID_INT8 } else if c == 't' { OID_TEXT } else { OID_TEXT_ARRAY });
+            types.push(if c == 'i' { OID_INT8 } else if c == 't' { OID_TEXT } else if c == 'I' { OID_INT8_ARRAY } else { OID_TEXT_ARRAY });
         }
         parse_stmt(out, i, sql, types);
     }

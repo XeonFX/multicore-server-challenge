@@ -157,7 +157,7 @@ fn handle(slot: i64, r: Request&) {
         begin(slot, K_TAGS, 0);
         var m: u8[>..] = [];
         bind_end(m, stmt(slot, m, ST_TAGS, 0));
-        submit(slot, m, false);
+        pool_add(slot, m, ST_TAGS);
         return;
     } else if s0 == "user" && n == 1 {
         if m == M_GET { current_user(slot, r); return; }
@@ -361,7 +361,7 @@ fn list(slot: i64, r: Request&) {
     param_int(msg, offset);
     if st != ST_LIST_ALL { param_text(msg, pval); }
     bind_end(msg, b);
-    submit(slot, msg, false);
+    pool_add(slot, msg, st);
 }
 
 fn feed(slot: i64, r: Request&) {

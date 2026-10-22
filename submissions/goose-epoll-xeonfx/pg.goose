@@ -9,6 +9,7 @@ import sys;
 let OID_INT8 = 20;
 let OID_TEXT = 25;
 let OID_TEXT_ARRAY = 1009;
+let OID_INT8_ARRAY = 1016;
 
 fn be32(out: u8[>..]&, v: i64) {
     out.push((v >> 24 & 0xff) as! u8); out.push((v >> 16 & 0xff) as! u8);
@@ -77,6 +78,52 @@ fn param_text_array(out: u8[>..]&, items: const u8[:], ends: const i64[:]) {
         var from = 0;
         for e in ends { be32(out, e - from); out.append(items[from..e]); from = e; }
     }
+    let n = out.len - at - 4;
+    out[at] = (n >> 24 & 0xff) as! u8; out[at + 1] = (n >> 16 & 0xff) as! u8;
+    out[at + 2] = (n >> 8 & 0xff) as! u8; out[at + 3] = (n & 0xff) as! u8;
+}
+
+// Where the parameter values of a Bind made by bind_begin start, and how many there are.
+fn bind_values(m: const u8[:]) -> i64, i64 {
+    var at = 5;
+    while m[at] != 0 { at += 1; }                  // the portal
+    at += 1;
+    while m[at] != 0 { at += 1; }                  // the statement
+    at += 1;
+    at += 2 + 2 * read16(m, at);
+    return at + 2, read16(m, at);
+}
+
+// The length of the value (length prefix included) at `at`.
+fn value_size(m: const u8[:], at: i64) -> i64 { 4 + max(read32(m, at), 0) }
+
+// Parameter k of a Bind made by bind_begin, with its length prefix.
+fn bind_param(m: const u8[:], k: i64) -> const u8[:] {
+    var at, n = bind_values(m);
+    for i in k { at += value_size(m, at); }
+    return m[at..at + value_size(m, at)];
+}
+
+// The parameters after the first, as one run of bytes: equal for two Binds of a statement that differ only in $1.
+fn bind_rest(m: const u8[:]) -> const u8[:] {
+    var at, n = bind_values(m);
+    at += value_size(m, at);
+    var end = at;
+    for i in n - 1 { end += value_size(m, end); }
+    return m[at..end];
+}
+
+// A one-dimensional binary array parameter of n elements of type elem; the elements (each with its length prefix)
+// follow, then param_array_end(out, at).
+fn param_array_begin(out: u8[>..]&, elem: i64, n: i64) -> i64 {
+    let at = out.len;
+    be32(out, 0);
+    be32(out, 1); be32(out, 0); be32(out, elem);
+    be32(out, n); be32(out, 1);
+    return at;
+}
+
+fn param_array_end(out: u8[>..]&, at: i64) {
     let n = out.len - at - 4;
     out[at] = (n >> 24 & 0xff) as! u8; out[at + 1] = (n >> 16 & 0xff) as! u8;
     out[at + 2] = (n >> 8 & 0xff) as! u8; out[at + 3] = (n & 0xff) as! u8;

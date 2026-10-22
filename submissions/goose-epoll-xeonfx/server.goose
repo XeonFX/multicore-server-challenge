@@ -25,6 +25,8 @@ var pg_password: u8[..256] = "";
 var pg_db: u8[..128] = "";
 var jwt_key = hmac_key("");
 var readers = 3;
+var batch_max = 32;             // the most reads one batched execution answers; 0 sends every read on its own
+var batch_hold = 1;             // reads wait in the pool while this many batched executions are in flight
 
 // ---------- state ----------
 
@@ -76,6 +78,10 @@ struct Conn {
     ctx_len: i64 = 0,
     msg: Run = Run { .. },      // the request's Bind/Execute messages, kept to send again
     msg_len: i64 = 0,
+    fam: i64 = -1,              // the statement of a read waiting in the pool
+    pooled: bool = false,       // sent from the pool: counted in in_flight until its answer comes
+    lead: bool = false,         // its execution answers it and the members chained by co_next
+    co_next: i64 = -1,
 }
 
 reusable var conns: Conn[>..] = [];
@@ -100,6 +106,8 @@ var reply_write: i32 = -1;
 var now_ms = 0;
 var ready: u64[>..] = [];       // connections with input left once their answer went out
 var scratch: u8[>..] = [];      // the receive buffer
+var pool: i64[>..] = [];        // list and tags reads waiting to be batched
+var in_flight = 0;              // executions sent from the pool and not answered
 
 let GROUP_MAX = 64;
 let RECV_SIZE = 65536;
@@ -272,21 +280,26 @@ fn close_group(p: i64) {
     pgs[p].open = 0;
 }
 
-// Sends the connection's kept request (again).
-fn send_kept(slot: i64) {
-    let c .= conns[slot];
-    var p = writer;
-    if !c.write {
-        p = 0;
-        for i in 1..readers { if pgs[i].waiting < pgs[p].waiting { p = i; } }
-    }
-    put(pgs[p].out, view(c.msg)[..c.msg_len]);
+fn least_busy_reader() -> i64 {
+    var p = 0;
+    for i in 1..readers { if pgs[i].waiting < pgs[p].waiting { p = i; } }
+    return p;
+}
+
+// Appends a request's messages to Postgres connection p; its answer goes to slot.
+fn put_request(p: i64, slot: i64, m: const u8[:]) {
+    put(pgs[p].out, m);
     enqueue(p, slot);
     pgs[p].waiting += 1;
     pgs[p].open += 1;
     if pgs[p].open >= GROUP_MAX { close_group(p); }
-    c.busy = true;
+    conns[slot].busy = true;
 }
+
+fn kept(slot: i64) -> u8[:] { view(conns[slot].msg)[..conns[slot].msg_len] }
+
+// Sends the connection's kept request (again).
+fn send_kept(slot: i64) { put_request(if conns[slot].write { writer } else { least_busy_reader() }, slot, kept(slot)); }
 
 // Keeps the request's messages with the connection, to send (again).
 fn keep(slot: i64, m: const u8[:]) {
@@ -301,6 +314,132 @@ fn submit(slot: i64, m: const u8[:], write: bool) {
     keep(slot, m);
     conns[slot].write = write;
     send_kept(slot);
+}
+
+// ---------- batched reads ----------
+
+// A list or tags read waits in the pool. While a batched execution is in flight, the reads that arrive meanwhile
+// gather there, and the next flush sends each statement's waiting reads as one execution.
+fn pool_add(slot: i64, m: const u8[:], fam: i64) {
+    keep(slot, m);
+    let c .= conns[slot];
+    c.write = false;
+    if batch_max == 0 { send_kept(slot); return; }
+    c.fam = fam;
+    c.busy = true;
+    pool.push(slot);
+}
+
+fn pool_flush() {
+    if pool.len == 0 || (in_flight >= batch_hold && pool.len < batch_max) { return; }
+    var group: i64[>..] = [];
+    for f in 5 {
+        let fam = if f < 4 { ST_LIST_ALL + f } else { ST_TAGS };
+        group.clear();
+        for s in pool {
+            if conns[s].fam != fam { continue; }
+            conns[s].fam = -1;
+            if conns[s].dead { free_conn(s); continue; }
+            group.push(s);
+            if group.len == batch_max { dispatch(group, fam); group.clear(); }
+        }
+        if group.len > 0 { dispatch(group, fam); }
+    }
+    pool.clear();
+}
+
+// One execution for the group, answered to its first member, which hands each member its rows.
+fn dispatch(group: const i64[:], fam: i64) {
+    let lead = group[0];
+    conns[lead].pooled = true;
+    in_flight += 1;
+    if group.len == 1 { send_kept(lead); return; }
+    for s, i in group { conns[s].co_next = if i + 1 < group.len { group[i + 1] } else { -1 }; }
+    conns[lead].lead = true;
+    if fam == ST_TAGS { send_kept(lead); return; }      // the same statement answers them all
+    // Shared enrichment pays when at most half the members ask for a page no other member asks for.
+    var rests: const u8[:][>..] = [];
+    for s in group { rests.push(bind_rest(kept(s))); }
+    var unique = 0;
+    for rest, i in rests {
+        var seen = false;
+        for j in i { if rests[j] == rest { seen = true; break; } }
+        if !seen { unique += 1; }
+    }
+    let base = if unique * 2 <= group.len { ST_SHARE_ALL } else { ST_BATCH_ALL };
+    let np = list_params(fam);
+    var m: u8[>..] = [];
+    let b = bind_begin(m, base + fam - ST_LIST_ALL, np);
+    for k in np {
+        let at = param_array_begin(m, if k < 3 { OID_INT8 } else { OID_TEXT }, group.len);
+        for s in group { m.append(bind_param(kept(s), k)); }
+        param_array_end(m, at);
+    }
+    bind_end(m, b);
+    put_request(least_busy_reader(), lead, m);
+}
+
+// The members of a batched execution, its lead first, unchained.
+fn unchain(lead: i64) -> i64[>..] {
+    var group: i64[>..] = [];
+    var s = lead;
+    while s >= 0 {
+        group.push(s);
+        let next = conns[s].co_next;
+        conns[s].co_next = -1;
+        conns[s].lead = false;
+        s = next;
+    }
+    return group;
+}
+
+fn deliver(slot: i64, rows: const u8[:]) {
+    if conns[slot].dead { free_conn(slot); } else { answer(slot, rows); }
+}
+
+// The last column of a DataRow, an int8: a batched row's member, counted from 1.
+fn last_int(d: const u8[:]) -> i64 {
+    var r = row(d);
+    for i in read16(d, 5) - 1 { col_skip(r); }
+    return col_int(r);
+}
+
+// A request's rows came back: a batch's rows are in member order, so each member's are one run of them.
+fn finish(slot: i64, rows: const u8[:]) {
+    if !conns[slot].lead { deliver(slot, rows); return; }
+    let tags = conns[slot].kind == K_TAGS;
+    let group = unchain(slot);
+    if tags {
+        for s in group { deliver(s, rows); }
+        return;
+    }
+    var k = 0;
+    var from = 0;
+    var at = 0;
+    while at < rows.len {
+        let n = read32(rows, at + 1) + 1;
+        if rows[at] == 'D' {
+            let ord = last_int(rows[at..at + n]);
+            while k < group.len - 1 && ord > k + 1 {
+                deliver(group[k], rows[from..at]);
+                k += 1;
+                from = at;
+            }
+        }
+        at += n;
+    }
+    while k < group.len {
+        deliver(group[k], rows[from..]);
+        k += 1;
+        from = rows.len;
+    }
+}
+
+// A batched execution's group failed: every member goes again on its own.
+fn resend(slot: i64) {
+    for s in unchain(slot) {
+        if conns[s].dead { free_conn(s); } else { send_kept(s); }
+    }
 }
 
 fn set_ctx(slot: i64, data: const u8[:]) {
@@ -340,6 +479,7 @@ fn pg_readable(p: i64) {
 }
 
 fn pg_flush() {
+    pool_flush();
     for p in pgs.len {
         if pgs[p].open > 0 { close_group(p); }
         while pending(pgs[p].out) > 0 {
@@ -362,6 +502,9 @@ fn group_done(p: i64, data: const u8[:]) {
     }
     if pgs[p].head < 0 { pgs[p].tail = -1; }
     pgs[p].waiting -= members.len;
+    for s in members {
+        if conns[s].pooled { conns[s].pooled = false; in_flight -= 1; }
+    }
 
     // An error rolls the whole group back: find whose statement failed.
     var at = 0;
@@ -385,6 +528,7 @@ fn group_done(p: i64, data: const u8[:]) {
     if failed >= 0 {
         let code, text = error_fields(data[err_at..err_at + read32(data, err_at + 1) + 1]);
         for s, i in members {
+            if conns[s].lead { resend(s); continue; }
             if conns[s].dead { free_conn(s); continue; }
             if i == failed { pend_failed(s, code, text); } else { send_kept(s); }
         }
@@ -401,7 +545,7 @@ fn group_done(p: i64, data: const u8[:]) {
             done += 1;
             let s = members[k];
             if done == conns[s].nstmt {
-                if conns[s].dead { free_conn(s); } else { answer(s, data[start..at]); }
+                finish(s, data[start..at]);
                 k += 1;
                 done = 0;
             }
