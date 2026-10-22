@@ -2,12 +2,6 @@
   "version": 1,
   "dependencies": {
     "net10.0": {
-      "CodeFusion.Security.Bcrypt": {
-        "type": "Direct",
-        "requested": "[1.1.0, )",
-        "resolved": "1.1.0",
-        "contentHash": "VowkVSRjhfwPME9l0JcPPSPJ1MmezNxKyHvG55HI1uLG1yJnDY7qw3+iXDGGxtvQBNSKS44tHMfrsGK3OkQwCg=="
-      },
       "Npgsql": {
         "type": "Direct",
         "requested": "[10.0.3, )",

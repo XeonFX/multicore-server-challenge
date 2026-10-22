@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace Conduit.Benchmarks;
 
-/// <summary>Cost 10, as the server runs it: one login or sign-up, with the CodeFusion.Security.Bcrypt package the
+/// <summary>Cost 10, as the server runs it: one login or sign-up, with the CodeFusion.Security.Bcrypt code the
 /// server uses and BCrypt.Net-Next.</summary>
 [MemoryDiagnoser]
 public class BcryptBenchmarks

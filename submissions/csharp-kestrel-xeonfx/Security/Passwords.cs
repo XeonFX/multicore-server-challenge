@@ -8,7 +8,7 @@ using CodeFusion.Security;
 namespace Conduit.Security;
 
 /// <summary>
-/// bcrypt (cost 10) on a <see cref="BcryptQueue"/> of the CodeFusion.Security.Bcrypt package: its own threads, up to
+/// bcrypt (cost 10) on a <see cref="BcryptQueue"/> of CodeFusion.Security.Bcrypt (Bcrypt/): its own threads, up to
 /// five hashes interleaved per thread. A hash takes tens of milliseconds of CPU; running it on the thread pool would
 /// let a burst of logins occupy every pool thread and stall all other requests until the pool grows.
 /// </summary>

@@ -28,11 +28,6 @@
           "xunit.v3.mtp-v2": "[4.0.2]"
         }
       },
-      "CodeFusion.Security.Bcrypt": {
-        "type": "Transitive",
-        "resolved": "1.1.0",
-        "contentHash": "VowkVSRjhfwPME9l0JcPPSPJ1MmezNxKyHvG55HI1uLG1yJnDY7qw3+iXDGGxtvQBNSKS44tHMfrsGK3OkQwCg=="
-      },
       "FsCheck": {
         "type": "Transitive",
         "resolved": "3.4.0",
@@ -188,7 +183,6 @@
       "conduit": {
         "type": "Project",
         "dependencies": {
-          "CodeFusion.Security.Bcrypt": "[1.1.0, )",
           "Npgsql": "[10.0.3, )"
         }
       }

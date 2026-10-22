@@ -18,13 +18,15 @@
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <EventSourceSupport>false</EventSourceSupport>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Security/Bcrypt/ is CodeFusion.Security.Bcrypt 1.1.0 from codefusion-cc/codefusion-dotnet (5ae8836), cut to what
+         this server uses; its *.g.cs files are what the library's generators write. Its lane loops use pointers. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Benchmarks/ and Tests/ are their own projects. -->
     <DefaultItemExcludes>$(DefaultItemExcludes);Benchmarks/**;Tests/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Npgsql" Version="10.0.3" />
-    <PackageReference Include="CodeFusion.Security.Bcrypt" Version="1.1.0" />
   </ItemGroup>
 
   <ItemGroup>

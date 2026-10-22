@@ -15,7 +15,7 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" Version="4.0.2" />
     <PackageReference Include="FsCheck.Xunit.v3" Version="3.4.0" />
-    <!-- An independent bcrypt to check the package's hashes against. -->
+    <!-- An independent bcrypt to check the server's hashes against. -->
     <PackageReference Include="BCrypt.Net-Next" Version="4.2.1" />
     <ProjectReference Include="../Conduit.csproj" />
   </ItemGroup>

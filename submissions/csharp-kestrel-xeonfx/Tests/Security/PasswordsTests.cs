@@ -9,7 +9,7 @@ using Xunit;
 namespace Conduit.Tests.Security;
 
 /// <summary>
-/// The server's passwords on the CodeFusion.Security.Bcrypt package, held against BCrypt.Net-Next: answers through the
+/// The server's passwords on CodeFusion.Security.Bcrypt, held against BCrypt.Net-Next: answers through the
 /// queue, calls whose request was aborted, stored hashes of every revision, the unknown-user hash and the 72-byte
 /// limit. Each test swaps in a queue of its own, as the endpoint tests swap Db's writer.
 /// </summary>

@@ -6,9 +6,8 @@ extra hop costs CPU on the same cores.
 Implements [`SPEC.md`](../../SPEC.md) and passes all 197 checks of `test/run.sh` on the dev and full seeds.
 
 Built on .NET 10 (SDK 10.0.402, pinned and checksummed), ASP.NET Core Kestrel with its own router,
-`System.Text.Json`, Npgsql 10.0.3 and, for bcrypt (cost 10), the
-[CodeFusion.Security.Bcrypt](https://www.nuget.org/packages/CodeFusion.Security.Bcrypt) 1.1.0 package. JWT (HS256)
-is written here.
+`System.Text.Json` and Npgsql 10.0.3. JWT (HS256) is written here, and bcrypt (cost 10) is my CodeFusion.Security.Bcrypt
+1.1.0, copied into `Security/Bcrypt/` from codefusion-dotnet and cut to what the server uses.
 
 ## Run
 
@@ -36,7 +35,7 @@ DATABASE_URL=postgres://conduit:conduit@127.0.0.1:5432/conduit JWT_SECRET=dev-se
 | `Http/` | request bodies, query strings, JSON responses |
 | `Endpoints/` | users, profiles, articles, comments, tags |
 | `Data/` | the SQL, the read groups and the group commit |
-| `Security/` | JWT, the `Authorization` header, passwords on the bcrypt package |
+| `Security/` | JWT, the `Authorization` header, passwords; `Security/Bcrypt/` is the bcrypt library |
 | `Tests/`, `Benchmarks/` | xUnit tests and BenchmarkDotNet |
 
 ## Results
@@ -56,7 +55,7 @@ for 60 s.
 125,000 is the most two load machines can drive: each opens about 64k connections to the server. No run had
 errors. At 125,000 Postgres used 70 of the 98% CPU and the server 28, so the limit is CPU, not memory. The
 version before the bcrypt change below (205e743) passed the same steps and used the same CPU per request. These runs
-used the bcrypt then written in this folder; the package that replaced it hasn't run on the rig yet.
+used the bcrypt then written in this folder; the library that replaced it hasn't run on the rig yet.
 
 Earlier, with one load machine and a server with two addresses, 100,000 was the most that rig could drive:
 
@@ -114,9 +113,9 @@ connections.
 
 A login is about one request in a thousand, but one hash costs as much CPU as a hundred other requests.
 
-- Hashes run on the package's own threads, so a burst of logins doesn't slow anything else.
+- Hashes run on the library's own threads, so a burst of logins doesn't slow anything else.
 - A thread that finds several hashes waiting runs up to five at once, interleaved. On the 8581C that takes 12 ms
-  per hash instead of 47 ms (BCrypt.Net-Next takes 60 ms), by the package's measurements.
+  per hash instead of 47 ms (BCrypt.Net-Next takes 60 ms), by the library's measurements.
 - Each round XORs its round key into one half before the S-box result arrives, not after. That keeps a step off
   the chain every round waits on: 7% less per hash.
 - The first hash waits up to 200 ms for others to join it. At the real login rate, almost every hash would
