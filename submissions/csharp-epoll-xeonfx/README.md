@@ -1,7 +1,8 @@
 # C# on raw epoll (xeonfx)
 
+Front: direct
+
 - Language: C# 14 on .NET 10 (SDK 10.0.402), compiled ahead of time with NativeAOT
-- Front: direct
 - Postgres: its own wire-protocol client, no driver
 - bcrypt: cost 10, `$2a$`, `$2b$` and `$2y$` hashes, on threads of its own
 
